@@ -1,0 +1,77 @@
+# =============================================================================
+# Go SDK (runanywhere-go) CI
+#
+# - build-and-test: Ubuntu, pure Go build/test (no CGO; device package uses stubs).
+# - device-tests: macOS only; builds runanywhere-commons shared libs and runs
+#   Go SDK tests with CGO (device package). Ensures on-device bindings and
+#   lifecycle work.
+# =============================================================================
+
+name: Go SDK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/runanywhere-go/**'
+      - 'sdk/runanywhere-commons/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/runanywhere-go/**'
+      - 'sdk/runanywhere-commons/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build SDK
+        working-directory: sdk/runanywhere-go
+        run: go build ./...
+
+      - name: Vet SDK
+        working-directory: sdk/runanywhere-go
+        run: go vet ./...
+
+      - name: Test SDK
+        working-directory: sdk/runanywhere-go
+        run: go test -v ./...
+
+      - name: Build examples
+        run: |
+          cd sdk/runanywhere-go/examples/basic-chat && go build -o basic-chat . && cd "$GITHUB_WORKSPACE"
+          cd sdk/runanywhere-go/examples/transcribe && go build -o transcribe . && cd "$GITHUB_WORKSPACE"
+          cd sdk/runanywhere-go/examples/embeddings && go build -o embeddings .
+
+  device-tests:
+    name: Device tests (CGO + commons)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Build commons and run Go device tests
+        run: task device:test-go

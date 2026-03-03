@@ -12,6 +12,7 @@
 #include "rac/server/rac_server.h"
 #include "rac/server/rac_openai_types.h"
 #include "rac/features/llm/rac_llm_service.h"
+#include "rac/core/rac_types.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -114,6 +115,16 @@ private:
     void unloadModel();
 
     /**
+     * @brief Load optional v2 backends (STT, TTS, embeddings) when config paths are set
+     */
+    void loadV2Backends();
+
+    /**
+     * @brief Unload v2 backends
+     */
+    void unloadV2Backends();
+
+    /**
      * @brief Server thread function
      */
     void serverThread();
@@ -133,6 +144,12 @@ private:
 
     // LLM handle
     rac_handle_t llmHandle_{nullptr};
+
+    // V2 optional handles (STT, TTS, embeddings)
+    rac_handle_t sttHandle_{nullptr};
+    rac_handle_t ttsHandle_{nullptr};
+    rac_handle_t embeddingsHandle_{nullptr};
+    std::string embeddingsModelId_;
 
     // Statistics
     std::atomic<int32_t> activeRequests_{0};

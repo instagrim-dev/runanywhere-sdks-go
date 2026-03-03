@@ -72,6 +72,9 @@ struct ServerOptions {
     bool enableCors = true;
     bool verbose = false;
     bool showHelp = false;
+    std::string sttModelPath;
+    std::string ttsModelPath;
+    std::string embeddingsModelPath;
 };
 
 static void printUsage(const char* programName) {
@@ -88,19 +91,28 @@ static void printUsage(const char* programName) {
     printf("  --cors                 Enable CORS (default)\n");
     printf("  --no-cors              Disable CORS\n");
     printf("  --verbose, -v          Enable verbose logging\n");
+    printf("  --stt-model <path>     Optional STT model for /v1/audio/transcriptions\n");
+    printf("  --tts-model <path>     Optional TTS model for /v1/audio/speech\n");
+    printf("  --embeddings-model <path> Optional embeddings model for /v1/embeddings\n");
     printf("  --help, -h             Show this help message\n\n");
     printf("Environment Variables:\n");
     printf("  RAC_MODEL_PATH         Model path (alternative to --model)\n");
     printf("  RAC_SERVER_HOST        Server host\n");
     printf("  RAC_SERVER_PORT        Server port\n");
     printf("  RAC_SERVER_THREADS     Number of threads\n");
-    printf("  RAC_SERVER_CONTEXT     Context window size\n\n");
+    printf("  RAC_SERVER_CONTEXT     Context window size\n");
+    printf("  RAC_STT_MODEL_PATH     STT model path\n");
+    printf("  RAC_TTS_MODEL_PATH     TTS model path\n");
+    printf("  RAC_EMBEDDINGS_MODEL_PATH Embeddings model path\n\n");
     printf("Example:\n");
     printf("  %s -m ~/models/llama-3.2-3b-q4.gguf -p 8080\n\n", programName);
     printf("Endpoints:\n");
-    printf("  GET  /v1/models           List available models\n");
-    printf("  POST /v1/chat/completions Chat completion (streaming & non-streaming)\n");
-    printf("  GET  /health              Health check\n");
+    printf("  GET  /v1/models             List available models\n");
+    printf("  POST /v1/chat/completions   Chat completion (streaming & non-streaming)\n");
+    printf("  GET  /health                Health check\n");
+    printf("  POST /v1/audio/transcriptions Audio to text (requires --stt-model)\n");
+    printf("  POST /v1/audio/speech       Text to audio (requires --tts-model)\n");
+    printf("  POST /v1/embeddings         Text to embeddings (requires --embeddings-model)\n");
 }
 
 static ServerOptions parseArgs(int argc, char* argv[]) {
@@ -121,6 +133,15 @@ static ServerOptions parseArgs(int argc, char* argv[]) {
 
     const char* envContext = std::getenv("RAC_SERVER_CONTEXT");
     if (envContext) opts.contextSize = std::atoi(envContext);
+
+    const char* envStt = std::getenv("RAC_STT_MODEL_PATH");
+    if (envStt) opts.sttModelPath = envStt;
+
+    const char* envTts = std::getenv("RAC_TTS_MODEL_PATH");
+    if (envTts) opts.ttsModelPath = envTts;
+
+    const char* envEmbed = std::getenv("RAC_EMBEDDINGS_MODEL_PATH");
+    if (envEmbed) opts.embeddingsModelPath = envEmbed;
 
     // Parse command line arguments (override env vars)
     for (int i = 1; i < argc; ++i) {
@@ -155,6 +176,15 @@ static ServerOptions parseArgs(int argc, char* argv[]) {
         }
         else if ((std::strcmp(arg, "--gpu-layers") == 0 || std::strcmp(arg, "-ngl") == 0) && i + 1 < argc) {
             opts.gpuLayers = std::atoi(argv[++i]);
+        }
+        else if (std::strcmp(arg, "--stt-model") == 0 && i + 1 < argc) {
+            opts.sttModelPath = argv[++i];
+        }
+        else if (std::strcmp(arg, "--tts-model") == 0 && i + 1 < argc) {
+            opts.ttsModelPath = argv[++i];
+        }
+        else if (std::strcmp(arg, "--embeddings-model") == 0 && i + 1 < argc) {
+            opts.embeddingsModelPath = argv[++i];
         }
     }
 
@@ -218,6 +248,9 @@ int main(int argc, char* argv[]) {
     config.gpu_layers = opts.gpuLayers;
     config.enable_cors = opts.enableCors ? RAC_TRUE : RAC_FALSE;
     config.verbose = opts.verbose ? RAC_TRUE : RAC_FALSE;
+    config.stt_model_path = opts.sttModelPath.empty() ? nullptr : opts.sttModelPath.c_str();
+    config.tts_model_path = opts.ttsModelPath.empty() ? nullptr : opts.ttsModelPath.c_str();
+    config.embeddings_model_path = opts.embeddingsModelPath.empty() ? nullptr : opts.embeddingsModelPath.c_str();
 
     printf("Configuration:\n");
     printf("  Model:   %s\n", opts.modelPath.c_str());
@@ -226,7 +259,13 @@ int main(int argc, char* argv[]) {
     printf("  Threads: %d\n", opts.threads);
     printf("  Context: %d\n", opts.contextSize);
     printf("  CORS:    %s\n", opts.enableCors ? "enabled" : "disabled");
+    if (!opts.sttModelPath.empty()) printf("  STT:     %s\n", opts.sttModelPath.c_str());
+    if (!opts.ttsModelPath.empty()) printf("  TTS:     %s\n", opts.ttsModelPath.c_str());
+    if (!opts.embeddingsModelPath.empty()) printf("  Embed:   %s\n", opts.embeddingsModelPath.c_str());
     printf("\n");
+
+    // ONNX backend is registered in HttpServer::loadV2Backends() when v2 model paths are set;
+    // avoid calling rac_backend_onnx_register() here to prevent double registration.
 
     // Start server
     printf("Starting server...\n");

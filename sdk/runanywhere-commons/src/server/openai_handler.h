@@ -6,6 +6,9 @@
  *   - GET  /v1/models
  *   - POST /v1/chat/completions
  *   - GET  /health
+ *   - POST /v1/audio/transcriptions (v2)
+ *   - POST /v1/audio/speech (v2)
+ *   - POST /v1/embeddings (v2)
  */
 
 #ifndef RAC_OPENAI_HANDLER_H
@@ -13,6 +16,7 @@
 
 #include "rac/server/rac_openai_types.h"
 #include "rac/features/llm/rac_llm_service.h"
+#include "rac/core/rac_types.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -32,12 +36,20 @@ namespace server {
 class OpenAIHandler {
 public:
     /**
-     * @brief Construct handler with LLM handle
+     * @brief Construct handler with LLM handle and optional v2 backend handles
      *
      * @param llmHandle LLM service handle (must remain valid)
-     * @param modelId Model ID to report
+     * @param modelId Model ID to report (LLM/completions)
+     * @param sttHandle Optional STT handle (nullptr = /v1/audio/transcriptions returns 501)
+     * @param ttsHandle Optional TTS handle (nullptr = /v1/audio/speech returns 501)
+     * @param embeddingsHandle Optional embeddings handle (nullptr = /v1/embeddings returns 501)
+     * @param embeddingsModelId Model ID to report in embeddings responses (when client omits "model")
      */
-    OpenAIHandler(rac_handle_t llmHandle, const std::string& modelId);
+    OpenAIHandler(rac_handle_t llmHandle, const std::string& modelId,
+                  rac_handle_t sttHandle = nullptr,
+                  rac_handle_t ttsHandle = nullptr,
+                  rac_handle_t embeddingsHandle = nullptr,
+                  const std::string& embeddingsModelId = "");
 
     /**
      * @brief Handle GET /v1/models
@@ -53,6 +65,21 @@ public:
      * @brief Handle GET /health
      */
     void handleHealth(const httplib::Request& req, httplib::Response& res);
+
+    /**
+     * @brief Handle POST /v1/audio/transcriptions (v2)
+     */
+    void handleTranscriptions(const httplib::Request& req, httplib::Response& res);
+
+    /**
+     * @brief Handle POST /v1/audio/speech (v2)
+     */
+    void handleSpeech(const httplib::Request& req, httplib::Response& res);
+
+    /**
+     * @brief Handle POST /v1/embeddings (v2)
+     */
+    void handleEmbeddings(const httplib::Request& req, httplib::Response& res);
 
     /**
      * @brief Get total tokens generated
@@ -87,6 +114,10 @@ private:
 
     rac_handle_t llmHandle_;
     std::string modelId_;
+    rac_handle_t sttHandle_{nullptr};
+    rac_handle_t ttsHandle_{nullptr};
+    rac_handle_t embeddingsHandle_{nullptr};
+    std::string embeddingsModelId_;
     std::atomic<int64_t> totalTokensGenerated_{0};
 };
 

@@ -7,6 +7,15 @@
 #include "openai_handler.h"
 #include "rac/core/rac_logger.h"
 #include "rac/backends/rac_llm_llamacpp.h"
+#include "rac/features/stt/rac_stt_service.h"
+#include "rac/features/stt/rac_stt_types.h"
+#include "rac/features/tts/rac_tts_service.h"
+#include "rac/features/tts/rac_tts_types.h"
+#include "rac/features/embeddings/rac_embeddings_service.h"
+#include "rac/features/embeddings/rac_embeddings_types.h"
+#ifdef RAC_HAS_ONNX
+#include "rac/backends/rac_vad_onnx.h"
+#endif
 
 #include <filesystem>
 #include <algorithm>
@@ -63,7 +72,7 @@ HttpServer::~HttpServer() {
 }
 
 rac_result_t HttpServer::start(const rac_server_config_t& config) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     if (running_) {
         return RAC_ERROR_SERVER_ALREADY_RUNNING;
@@ -92,6 +101,8 @@ rac_result_t HttpServer::start(const rac_server_config_t& config) {
     if (RAC_FAILED(rc)) {
         return rc;
     }
+
+    loadV2Backends();
 
     // Create HTTP server
     server_ = std::make_unique<httplib::Server>();
@@ -125,19 +136,21 @@ rac_result_t HttpServer::start(const rac_server_config_t& config) {
         }
     }
 
-    // Timeout - something went wrong
+    // Timeout - something went wrong. Release lock before join so serverThread()
+    // can acquire mutex_ in its cleanup block (avoids deadlock).
     shouldStop_ = true;
+    lock.unlock();
     if (serverThread_.joinable()) {
         serverThread_.join();
     }
-    unloadModel();
+    // Cleanup is done in serverThread() on exit; no need to call unloadV2Backends/unloadModel here.
 
     RAC_LOG_ERROR("Server", "Failed to start server");
     return RAC_ERROR_SERVER_BIND_FAILED;
 }
 
 rac_result_t HttpServer::stop() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     if (!running_) {
         return RAC_ERROR_SERVER_NOT_RUNNING;
@@ -151,14 +164,18 @@ rac_result_t HttpServer::stop() {
         server_->stop();
     }
 
+    const bool isServerThread = (serverThread_.get_id() == std::this_thread::get_id());
+    if (isServerThread) {
+        // Signal handler ran in the server thread; must not join self. Cleanup will run in serverThread() on exit.
+        lock.unlock();
+        return RAC_SUCCESS;
+    }
+
+    lock.unlock();
     if (serverThread_.joinable()) {
         serverThread_.join();
     }
-
-    unloadModel();
-
-    server_.reset();
-    running_ = false;
+    // Cleanup is done in serverThread() on exit; nothing else to do here.
 
     RAC_LOG_INFO("Server", "Server stopped");
 
@@ -207,8 +224,9 @@ void HttpServer::setErrorCallback(rac_server_error_callback_fn callback, void* u
 }
 
 void HttpServer::setupRoutes() {
-    // Create handler with LLM handle
-    auto handler = std::make_shared<OpenAIHandler>(llmHandle_, modelId_);
+    auto handler = std::make_shared<OpenAIHandler>(llmHandle_, modelId_,
+                                                   sttHandle_, ttsHandle_, embeddingsHandle_,
+                                                   embeddingsModelId_);
 
     // GET /v1/models
     server_->Get("/v1/models", [this, handler](const httplib::Request& req, httplib::Response& res) {
@@ -235,8 +253,16 @@ void HttpServer::setupRoutes() {
             if (errorCallback_) {
                 errorCallback_("/v1/chat/completions", RAC_ERROR_UNKNOWN, e.what(), errorCallbackUserData_);
             }
-            res.status = 500;
-            res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        } catch (...) {
+            RAC_LOG_ERROR("Server", "Error handling chat completions: unknown exception");
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
         }
 
         activeRequests_--;
@@ -248,6 +274,99 @@ void HttpServer::setupRoutes() {
         handler->handleHealth(req, res);
     });
 
+    // POST /v1/audio/transcriptions (v2)
+    server_->Post("/v1/audio/transcriptions", [this, handler](const httplib::Request& req, httplib::Response& res) {
+        totalRequests_++;
+        activeRequests_++;
+        if (requestCallback_) {
+            requestCallback_("POST", "/v1/audio/transcriptions", requestCallbackUserData_);
+        }
+        try {
+            handler->handleTranscriptions(req, res);
+        } catch (const std::exception& e) {
+            RAC_LOG_ERROR("Server", "Error handling transcriptions: %s", e.what());
+            if (errorCallback_) {
+                errorCallback_("/v1/audio/transcriptions", RAC_ERROR_UNKNOWN, e.what(), errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        } catch (...) {
+            RAC_LOG_ERROR("Server", "Error handling transcriptions: unknown exception");
+            if (errorCallback_) {
+                errorCallback_("/v1/audio/transcriptions", RAC_ERROR_UNKNOWN, "unknown exception", errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        }
+        activeRequests_--;
+    });
+
+    // POST /v1/audio/speech (v2)
+    server_->Post("/v1/audio/speech", [this, handler](const httplib::Request& req, httplib::Response& res) {
+        totalRequests_++;
+        activeRequests_++;
+        if (requestCallback_) {
+            requestCallback_("POST", "/v1/audio/speech", requestCallbackUserData_);
+        }
+        try {
+            handler->handleSpeech(req, res);
+        } catch (const std::exception& e) {
+            RAC_LOG_ERROR("Server", "Error handling speech: %s", e.what());
+            if (errorCallback_) {
+                errorCallback_("/v1/audio/speech", RAC_ERROR_UNKNOWN, e.what(), errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        } catch (...) {
+            RAC_LOG_ERROR("Server", "Error handling speech: unknown exception");
+            if (errorCallback_) {
+                errorCallback_("/v1/audio/speech", RAC_ERROR_UNKNOWN, "unknown exception", errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        }
+        activeRequests_--;
+    });
+
+    // POST /v1/embeddings (v2)
+    server_->Post("/v1/embeddings", [this, handler](const httplib::Request& req, httplib::Response& res) {
+        totalRequests_++;
+        activeRequests_++;
+        if (requestCallback_) {
+            requestCallback_("POST", "/v1/embeddings", requestCallbackUserData_);
+        }
+        try {
+            handler->handleEmbeddings(req, res);
+        } catch (const std::exception& e) {
+            RAC_LOG_ERROR("Server", "Error handling embeddings: %s", e.what());
+            if (errorCallback_) {
+                errorCallback_("/v1/embeddings", RAC_ERROR_UNKNOWN, e.what(), errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        } catch (...) {
+            RAC_LOG_ERROR("Server", "Error handling embeddings: unknown exception");
+            if (errorCallback_) {
+                errorCallback_("/v1/embeddings", RAC_ERROR_UNKNOWN, "unknown exception", errorCallbackUserData_);
+            }
+            if (res.status == 0) {
+                res.status = 500;
+                res.set_content("{\"error\": {\"message\": \"Internal server error\"}}", "application/json");
+            }
+        }
+        activeRequests_--;
+    });
+
     // Root endpoint - info
     server_->Get("/", [this](const httplib::Request& /*req*/, httplib::Response& res) {
         nlohmann::json info;
@@ -257,7 +376,10 @@ void HttpServer::setupRoutes() {
         info["endpoints"] = {
             "GET  /v1/models",
             "POST /v1/chat/completions",
-            "GET  /health"
+            "GET  /health",
+            "POST /v1/audio/transcriptions",
+            "POST /v1/audio/speech",
+            "POST /v1/embeddings"
         };
         res.set_content(info.dump(2), "application/json");
     });
@@ -318,6 +440,65 @@ void HttpServer::unloadModel() {
     }
 }
 
+void HttpServer::loadV2Backends() {
+#ifdef RAC_HAS_ONNX
+    // Register ONNX backend when any v2 model path is set, so rac_stt_create/rac_tts_create/
+    // rac_embeddings_create can resolve the backend (consistent with CLI runanywhere-server).
+    if ((config_.stt_model_path && config_.stt_model_path[0] != '\0') ||
+        (config_.tts_model_path && config_.tts_model_path[0] != '\0') ||
+        (config_.embeddings_model_path && config_.embeddings_model_path[0] != '\0')) {
+        rac_backend_onnx_register();
+    }
+#endif
+    if (config_.stt_model_path && config_.stt_model_path[0] != '\0') {
+        rac_result_t rc = rac_stt_create(config_.stt_model_path, &sttHandle_);
+        if (RAC_SUCCEEDED(rc)) {
+            RAC_LOG_INFO("Server", "STT backend loaded: %s", config_.stt_model_path);
+        } else {
+            RAC_LOG_WARNING("Server", "STT backend failed to load (code %d), /v1/audio/transcriptions will return 501", rc);
+        }
+    }
+    if (config_.tts_model_path && config_.tts_model_path[0] != '\0') {
+        rac_result_t rc = rac_tts_create(config_.tts_model_path, &ttsHandle_);
+        if (RAC_SUCCEEDED(rc)) {
+            RAC_LOG_INFO("Server", "TTS backend loaded: %s", config_.tts_model_path);
+        } else {
+            RAC_LOG_WARNING("Server", "TTS backend failed to load (code %d), /v1/audio/speech will return 501", rc);
+        }
+    }
+    if (config_.embeddings_model_path && config_.embeddings_model_path[0] != '\0') {
+        rac_result_t rc = rac_embeddings_create(config_.embeddings_model_path, &embeddingsHandle_);
+        if (RAC_SUCCEEDED(rc)) {
+            rc = rac_embeddings_initialize(embeddingsHandle_, config_.embeddings_model_path);
+            if (RAC_FAILED(rc)) {
+                rac_embeddings_destroy(embeddingsHandle_);
+                embeddingsHandle_ = nullptr;
+                RAC_LOG_WARNING("Server", "Embeddings initialize failed (code %d)", rc);
+            } else {
+                embeddingsModelId_ = extractModelIdFromPath(config_.embeddings_model_path);
+                RAC_LOG_INFO("Server", "Embeddings backend loaded: %s", config_.embeddings_model_path);
+            }
+        } else {
+            RAC_LOG_WARNING("Server", "Embeddings backend failed to create (code %d), /v1/embeddings will return 501", rc);
+        }
+    }
+}
+
+void HttpServer::unloadV2Backends() {
+    if (sttHandle_) {
+        rac_stt_destroy(sttHandle_);
+        sttHandle_ = nullptr;
+    }
+    if (ttsHandle_) {
+        rac_tts_destroy(ttsHandle_);
+        ttsHandle_ = nullptr;
+    }
+    if (embeddingsHandle_) {
+        rac_embeddings_destroy(embeddingsHandle_);
+        embeddingsHandle_ = nullptr;
+    }
+}
+
 void HttpServer::serverThread() {
     RAC_LOG_DEBUG("Server", "Server thread starting on %s:%d", host_.c_str(), config_.port);
 
@@ -325,6 +506,11 @@ void HttpServer::serverThread() {
     if (!server_->bind_to_port(host_, config_.port)) {
         RAC_LOG_ERROR("Server", "Failed to bind to %s:%d", host_.c_str(), config_.port);
         running_ = false;
+        // Run unified cleanup so llmHandle_/v2 handles are released (same as normal exit path).
+        std::lock_guard<std::mutex> lock(mutex_);
+        unloadV2Backends();
+        unloadModel();
+        server_.reset();
         return;
     }
 
@@ -338,6 +524,13 @@ void HttpServer::serverThread() {
     }
 
     running_ = false;
+
+    // Cleanup on exit (single place so stop() from main thread does not duplicate after join)
+    std::lock_guard<std::mutex> lock(mutex_);
+    unloadV2Backends();
+    unloadModel();
+    server_.reset();
+
     RAC_LOG_DEBUG("Server", "Server thread exiting");
 }
 

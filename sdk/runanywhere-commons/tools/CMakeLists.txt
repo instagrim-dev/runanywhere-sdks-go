@@ -31,6 +31,7 @@ endif()
 
 if(TARGET rac_backend_onnx)
     target_link_libraries(runanywhere-server PRIVATE rac_backend_onnx)
+    target_compile_definitions(runanywhere-server PRIVATE RAC_HAS_ONNX=1)
 endif()
 
 # Threading

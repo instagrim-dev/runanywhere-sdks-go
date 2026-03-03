@@ -1,0 +1,50 @@
+# =============================================================================
+# C++ Server (runanywhere-commons) - Docker build + smoke
+#
+# Builds the runanywhere-server in Docker (LlamaCPP only) and runs a smoke
+# test (binary --help). No model download. Triggers on changes under
+# sdk/runanywhere-commons/.
+# =============================================================================
+
+name: Server (Docker)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/runanywhere-commons/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/runanywhere-commons/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -f sdk/runanywhere-commons/Dockerfile.server \
+            -t runanywhere-server-builder sdk/runanywhere-commons
+
+      - name: Build server in container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/sdk/runanywhere-commons:/src" \
+            -w /src \
+            runanywhere-server-builder
+
+      - name: Smoke test (binary --help)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/sdk/runanywhere-commons:/src" \
+            -w /src \
+            runanywhere-server-builder \
+            ./build-server/tools/runanywhere-server --help

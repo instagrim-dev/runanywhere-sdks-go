@@ -280,6 +280,38 @@ dist/android/
     └── libonnxruntime.so
 ```
 
+### HTTP server (runanywhere-server)
+
+Build the OpenAI-compatible HTTP server (requires `RAC_BUILD_BACKENDS=ON` and LlamaCPP):
+
+```bash
+./scripts/build-server.sh
+# Binary: build-server/tools/runanywhere-server
+```
+
+To build in Docker (Linux binary; LlamaCPP only, no ONNX):
+
+```bash
+task server:build-docker        # from repo root; leaves binary in sdk/runanywhere-commons/build-server/
+task server:smoke-docker        # smoke test (--help) inside the container
+task server:integration-docker # same as smoke if no model; with model: task server:integration-docker -- /src/path/to/model.gguf
+```
+
+Run smoke test (binary `--help`) and optional integration test (start server, GET /health, assert v3 fields):
+
+```bash
+./scripts/smoke-test-server.sh                          # smoke only
+./scripts/smoke-test-server.sh /path/to/model.gguf      # smoke + integration
+```
+
+For integration you need a GGUF model (e.g. from `tests/scripts/download-test-models.sh`).
+
+From the repo root you can use [Task](https://taskfile.dev) (see root `Taskfile.yml`):
+
+- `task server:build` / `task server:smoke` / `task server:integration -- /path/to/model.gguf`
+- **Docker:** `task server:build-docker`, `task server:smoke-docker`, `task server:integration-docker -- /src/path/to/model.gguf`
+- **E2E:** `task server:e2e-docker` (build in Docker, download model if missing, run integration in container); `task server:e2e` (same on host with native binary).
+
 ---
 
 ## API Reference

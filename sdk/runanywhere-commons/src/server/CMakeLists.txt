@@ -4,9 +4,12 @@
 # OpenAI-compatible HTTP server for LLM inference
 #
 # This module provides:
-#   - GET  /v1/models           - List available models
-#   - POST /v1/chat/completions - Chat completion (streaming & non-streaming)
-#   - GET  /health              - Health check
+#   - GET  /v1/models             - List available models
+#   - POST /v1/chat/completions   - Chat completion (streaming & non-streaming)
+#   - GET  /health                - Health check
+#   - POST /v1/audio/transcriptions - Audio to text (v2, optional STT model)
+#   - POST /v1/audio/speech       - Text to audio (v2, optional TTS model)
+#   - POST /v1/embeddings         - Text to embeddings (v2, optional embeddings model)
 #
 # Dependencies (fetched by parent CMakeLists.txt):
 #   - cpp-httplib (header-only HTTP library)
@@ -53,6 +56,11 @@ target_link_libraries(rac_server PUBLIC
 if(TARGET rac_backend_llamacpp)
     target_link_libraries(rac_server PUBLIC rac_backend_llamacpp)
     target_compile_definitions(rac_server PRIVATE RAC_HAS_LLAMACPP=1)
+endif()
+
+if(TARGET rac_backend_onnx)
+    target_link_libraries(rac_server PUBLIC rac_backend_onnx)
+    target_compile_definitions(rac_server PRIVATE RAC_HAS_ONNX=1)
 endif()
 
 # Threading support

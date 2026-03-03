@@ -8,18 +8,100 @@
 #include "openai_handler.h"
 #include "json_utils.h"
 #include "openai_translation.h"
+#ifdef RAC_HAS_LLAMACPP
 #include "rac/backends/rac_llm_llamacpp.h"
+#endif
+#include "rac/core/rac_audio_utils.h"
 #include "rac/core/rac_logger.h"
+#include "rac/core/rac_types.h"
+#include "rac/features/embeddings/rac_embeddings_service.h"
+#include "rac/features/embeddings/rac_embeddings_types.h"
 #include "rac/features/llm/rac_tool_calling.h"
+#include "rac/features/stt/rac_stt_service.h"
+#include "rac/features/stt/rac_stt_types.h"
+#include "rac/features/tts/rac_tts_service.h"
+#include "rac/features/tts/rac_tts_types.h"
 
 #include <chrono>
-#include <sstream>
+#include <cstring>
 #include <random>
+#include <sstream>
 
 namespace rac {
 namespace server {
 
 namespace {
+
+// Find the "data" chunk in an in-memory RIFF/WAVE buffer. Returns true and sets
+// out_data/out_size if found; otherwise false (caller may pass whole buffer).
+bool findWavDataChunk(const void* wavData, size_t wavSize, const void** outData, size_t* outSize) {
+    const uint8_t* p = static_cast<const uint8_t*>(wavData);
+    if (wavSize < 12 || std::strncmp(reinterpret_cast<const char*>(p), "RIFF", 4) != 0 ||
+        std::strncmp(reinterpret_cast<const char*>(p + 8), "WAVE", 4) != 0) {
+        return false;
+    }
+    size_t offset = 12;
+    while (offset + 8 <= wavSize) {
+        const char* chunkId = reinterpret_cast<const char*>(p + offset);
+        uint32_t chunkSize = 0;
+        std::memcpy(&chunkSize, p + offset + 4, 4);
+        if (std::strncmp(chunkId, "data", 4) == 0) {
+            size_t dataLen = static_cast<size_t>(chunkSize);
+            if (offset + 8 + dataLen > wavSize) {
+                dataLen = wavSize - (offset + 8);
+            }
+            *outData = p + offset + 8;
+            *outSize = dataLen;
+            return true;
+        }
+        size_t skip = static_cast<size_t>(chunkSize);
+        if (offset + 8 + skip > wavSize) {
+            skip = wavSize - (offset + 8);
+        }
+        // RIFF chunks are word-aligned (pad to even byte boundary)
+        offset += 8 + ((skip + 1) & ~size_t(1));
+    }
+    return false;
+}
+
+// Parse the "fmt " chunk in a RIFF/WAVE buffer. Returns sample rate in Hz, or 0 if not found/invalid.
+int32_t getWavSampleRateFromFmt(const void* wavData, size_t wavSize) {
+    const uint8_t* p = static_cast<const uint8_t*>(wavData);
+    if (wavSize < 24 || std::strncmp(reinterpret_cast<const char*>(p), "RIFF", 4) != 0 ||
+        std::strncmp(reinterpret_cast<const char*>(p + 8), "WAVE", 4) != 0) {
+        return 0;
+    }
+    size_t offset = 12;
+    while (offset + 8 <= wavSize) {
+        const char* chunkId = reinterpret_cast<const char*>(p + offset);
+        uint32_t chunkSize = 0;
+        std::memcpy(&chunkSize, p + offset + 4, 4);
+        if (std::strncmp(chunkId, "fmt ", 4) == 0 && chunkSize >= 16) {
+            uint32_t sampleRate = 0;
+            std::memcpy(&sampleRate, p + offset + 8 + 4, 4);
+            return static_cast<int32_t>(sampleRate);
+        }
+        size_t skip = static_cast<size_t>(chunkSize);
+        if (offset + 8 + skip > wavSize) {
+            break;
+        }
+        offset += 8 + ((skip + 1) & ~size_t(1));
+    }
+    return 0;
+}
+
+// Content-Type for TTS response from rac_audio_format_enum_t.
+const char* ttsContentTypeFromFormat(rac_audio_format_enum_t format) {
+    switch (format) {
+        case RAC_AUDIO_FORMAT_WAV: return "audio/wav";
+        case RAC_AUDIO_FORMAT_MP3: return "audio/mpeg";
+        case RAC_AUDIO_FORMAT_OPUS: return "audio/opus";
+        case RAC_AUDIO_FORMAT_AAC: return "audio/aac";
+        case RAC_AUDIO_FORMAT_FLAC: return "audio/flac";
+        case RAC_AUDIO_FORMAT_PCM:
+        default: return "audio/wav";  // PCM branch encodes to WAV; default fallback
+    }
+}
 
 // Generate a random ID for requests
 std::string generateId(const std::string& prefix) {
@@ -41,13 +123,25 @@ int64_t currentTimestamp() {
 
 } // anonymous namespace
 
-OpenAIHandler::OpenAIHandler(rac_handle_t llmHandle, const std::string& modelId)
+OpenAIHandler::OpenAIHandler(rac_handle_t llmHandle, const std::string& modelId,
+                             rac_handle_t sttHandle,
+                             rac_handle_t ttsHandle,
+                             rac_handle_t embeddingsHandle,
+                             const std::string& embeddingsModelId)
     : llmHandle_(llmHandle)
     , modelId_(modelId)
+    , sttHandle_(sttHandle)
+    , ttsHandle_(ttsHandle)
+    , embeddingsHandle_(embeddingsHandle)
+    , embeddingsModelId_(embeddingsModelId)
 {
 }
 
 void OpenAIHandler::handleModels(const httplib::Request& /*req*/, httplib::Response& res) {
+#ifndef RAC_HAS_LLAMACPP
+    sendError(res, 501, "models not available: LlamaCPP backend not built", "not_implemented");
+    return;
+#else
     rac_openai_models_response_t response = {};
     response.object = "list";
 
@@ -64,9 +158,14 @@ void OpenAIHandler::handleModels(const httplib::Request& /*req*/, httplib::Respo
 
     res.set_content(jsonResponse.dump(), "application/json");
     res.status = 200;
+#endif // RAC_HAS_LLAMACPP
 }
 
 void OpenAIHandler::handleChatCompletions(const httplib::Request& req, httplib::Response& res) {
+#ifndef RAC_HAS_LLAMACPP
+    sendError(res, 501, "chat completions not available: LlamaCPP backend not built", "not_implemented");
+    return;
+#endif
     // Parse request body
     nlohmann::json requestJson;
     try {
@@ -106,19 +205,276 @@ void OpenAIHandler::handleHealth(const httplib::Request& /*req*/, httplib::Respo
     response["model"] = modelId_;
 
     // Check if LLM is ready
+#ifdef RAC_HAS_LLAMACPP
     if (llmHandle_) {
         response["model_loaded"] = rac_llm_llamacpp_is_model_loaded(llmHandle_) != 0;
     } else {
         response["model_loaded"] = false;
     }
+#else
+    response["model_loaded"] = false;
+#endif
+
+    // v2 capabilities
+    response["stt_available"] = (sttHandle_ != nullptr);
+    response["tts_available"] = (ttsHandle_ != nullptr);
+    response["embeddings_available"] = (embeddingsHandle_ != nullptr);
 
     res.set_content(response.dump(), "application/json");
     res.status = 200;
 }
 
+void OpenAIHandler::handleTranscriptions(const httplib::Request& req, httplib::Response& res) {
+    if (!sttHandle_) {
+        sendError(res, 501, "transcriptions not configured: set STT model path (e.g. --stt-model)", "not_implemented");
+        return;
+    }
+    if (!req.has_file("file")) {
+        sendError(res, 400, "missing required field: file (multipart form)", "invalid_request_error");
+        return;
+    }
+    auto file = req.get_file_value("file");
+    std::string audio = file.content;
+    if (audio.empty()) {
+        sendError(res, 400, "file content is empty", "invalid_request_error");
+        return;
+    }
+    // Reject known compressed formats; only WAV (RIFF) or raw PCM is supported.
+    if (audio.size() >= 3 && audio.substr(0, 3) == "ID3") {
+        sendError(res, 400, "unsupported audio format: MP3 not supported; use WAV (RIFF) or raw PCM", "invalid_request_error");
+        return;
+    }
+    if (audio.size() >= 8 && audio.substr(4, 4) == "ftyp") {
+        sendError(res, 400, "unsupported audio format: M4A/MP4 not supported; use WAV (RIFF) or raw PCM", "invalid_request_error");
+        return;
+    }
+    if (audio.size() >= 4 && audio.substr(0, 4) == "OggS") {
+        sendError(res, 400, "unsupported audio format: OGG not supported; use WAV (RIFF) or raw PCM", "invalid_request_error");
+        return;
+    }
+    // If upload is RIFF/WAVE, locate the "data" chunk and pass raw PCM only.
+    // The STT backend (e.g. ONNX) expects headerless PCM; sample rate is set via options.
+    const void* audioData = audio.data();
+    size_t audioSize = audio.size();
+    int32_t wavSampleRate = 0;
+    if (audio.size() >= 12 && audio.substr(0, 4) == "RIFF") {
+        wavSampleRate = getWavSampleRateFromFmt(audio.data(), audio.size());
+        const void* dataChunk = nullptr;
+        size_t dataChunkSize = 0;
+        if (findWavDataChunk(audio.data(), audio.size(), &dataChunk, &dataChunkSize)) {
+            audioData = dataChunk;
+            audioSize = dataChunkSize;
+        }
+    }
+    rac_stt_options_t options = RAC_STT_OPTIONS_DEFAULT;
+    if (wavSampleRate > 0) {
+        options.sample_rate = wavSampleRate;
+    }
+    // Language: read from query param (cpp-httplib v0.15.3 does not expose multipart form fields;
+    // OpenAI spec uses form field "language" — when upgrading httplib, prefer req.form.get_field("language")).
+    std::string langParam = req.get_param_value("language");
+    if (!langParam.empty()) {
+        options.language = langParam.c_str();
+    }
+    rac_stt_result_t sttResult = {};
+    rac_result_t rc = rac_stt_transcribe(sttHandle_, audioData, audioSize, &options, &sttResult);
+    if (RAC_FAILED(rc)) {
+        sendError(res, 500, "transcription failed", "server_error");
+        return;
+    }
+    nlohmann::json out;
+    out["text"] = sttResult.text ? sttResult.text : "";
+    res.set_content(out.dump(), "application/json");
+    res.status = 200;
+    rac_stt_result_free(&sttResult);
+}
+
+void OpenAIHandler::handleSpeech(const httplib::Request& req, httplib::Response& res) {
+    if (!ttsHandle_) {
+        sendError(res, 501, "speech not configured: set TTS model path (e.g. --tts-model)", "not_implemented");
+        return;
+    }
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(req.body);
+    } catch (const std::exception& e) {
+        sendError(res, 400, std::string("Invalid JSON: ") + e.what(), "invalid_request_error");
+        return;
+    }
+    if (!body.contains("input") || !body["input"].is_string()) {
+        sendError(res, 400, "missing required field: input (string)", "invalid_request_error");
+        return;
+    }
+    std::string text = body["input"].get<std::string>();
+    rac_tts_result_t ttsResult = {};
+    rac_result_t rc = rac_tts_synthesize(ttsHandle_, text.c_str(), nullptr, &ttsResult);
+    if (RAC_FAILED(rc)) {
+        sendError(res, 500, "synthesis failed", "server_error");
+        return;
+    }
+    if (!ttsResult.audio_data || ttsResult.audio_size == 0) {
+        rac_tts_result_free(&ttsResult);
+        sendError(res, 500, "no audio produced", "server_error");
+        return;
+    }
+    if (ttsResult.audio_format == RAC_AUDIO_FORMAT_PCM) {
+        void* wavData = nullptr;
+        size_t wavSize = 0;
+        rc = rac_audio_float32_to_wav(ttsResult.audio_data, ttsResult.audio_size,
+                                      ttsResult.sample_rate > 0 ? ttsResult.sample_rate : 22050,
+                                      &wavData, &wavSize);
+        rac_tts_result_free(&ttsResult);
+        if (RAC_FAILED(rc) || !wavData) {
+            sendError(res, 500, "audio conversion failed", "server_error");
+            return;
+        }
+        res.set_content(std::string(static_cast<const char*>(wavData), wavSize), "audio/wav");
+        rac_free(wavData);
+    } else {
+        const char* contentType = ttsContentTypeFromFormat(ttsResult.audio_format);
+        res.set_content(std::string(static_cast<const char*>(ttsResult.audio_data),
+                                    ttsResult.audio_size),
+                       contentType);
+        rac_tts_result_free(&ttsResult);
+    }
+    res.status = 200;
+}
+
+void OpenAIHandler::handleEmbeddings(const httplib::Request& req, httplib::Response& res) {
+    if (!embeddingsHandle_) {
+        sendError(res, 501, "embeddings not configured: set embeddings model path (e.g. --embeddings-model)", "not_implemented");
+        return;
+    }
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(req.body);
+    } catch (const std::exception& e) {
+        sendError(res, 400, std::string("Invalid JSON: ") + e.what(), "invalid_request_error");
+        return;
+    }
+    if (!body.contains("input")) {
+        sendError(res, 400, "missing required field: input", "invalid_request_error");
+        return;
+    }
+    // Validate "model" before calling embed so we do not leak embResult on 400.
+    if (body.contains("model") && !body["model"].is_string()) {
+        sendError(res, 400, "model must be a string", "invalid_request_error");
+        return;
+    }
+    rac_embeddings_result_t embResult = {};
+    rac_result_t rc;
+    if (body["input"].is_array()) {
+        std::vector<std::string> texts;
+        for (const auto& el : body["input"]) {
+            if (!el.is_string()) {
+                sendError(res, 400, "input array must contain only strings", "invalid_request_error");
+                return;
+            }
+            texts.push_back(el.get<std::string>());
+        }
+        if (texts.empty()) {
+            sendError(res, 400, "input array must contain at least one string", "invalid_request_error");
+            return;
+        }
+        std::vector<const char*> ptrs;
+        for (const auto& s : texts) {
+            ptrs.push_back(s.c_str());
+        }
+        rc = rac_embeddings_embed_batch(embeddingsHandle_, ptrs.data(), ptrs.size(),
+                                        nullptr, &embResult);
+        if (RAC_FAILED(rc)) {
+            // Fallback: embed each item separately (batch backend may be unavailable)
+            std::string embedModel = embeddingsModelId_;
+            if (body.contains("model")) {
+                embedModel = body["model"].get<std::string>();
+            }
+            nlohmann::json out;
+            out["object"] = "list";
+            out["model"] = embedModel;
+            out["data"] = nlohmann::json::array();
+            int32_t totalTokens = 0;
+            for (size_t i = 0; i < texts.size(); ++i) {
+                rac_embeddings_result_t singleResult = {};
+                rc = rac_embeddings_embed(embeddingsHandle_, texts[i].c_str(), nullptr, &singleResult);
+                if (RAC_FAILED(rc)) {
+                    rac_embeddings_result_free(&singleResult);
+                    sendError(res, 500, "embeddings failed", "server_error");
+                    return;
+                }
+                nlohmann::json obj;
+                obj["object"] = "embedding";
+                obj["index"] = static_cast<int>(i);
+                if (singleResult.embeddings && singleResult.num_embeddings > 0 && singleResult.embeddings[0].data) {
+                    std::vector<float> vec(singleResult.embeddings[0].data,
+                                          singleResult.embeddings[0].data + singleResult.embeddings[0].dimension);
+                    obj["embedding"] = vec;
+                } else {
+                    obj["embedding"] = nlohmann::json::array();
+                }
+                out["data"].push_back(obj);
+                totalTokens += singleResult.total_tokens;
+                rac_embeddings_result_free(&singleResult);
+            }
+            out["usage"] = nlohmann::json::object({
+                {"prompt_tokens", totalTokens},
+                {"total_tokens", totalTokens}
+            });
+            res.set_content(out.dump(), "application/json");
+            res.status = 200;
+            return;
+        }
+    } else if (body["input"].is_string()) {
+        std::string text = body["input"].get<std::string>();
+        rc = rac_embeddings_embed(embeddingsHandle_, text.c_str(), nullptr, &embResult);
+    } else {
+        sendError(res, 400, "input must be string or array of strings", "invalid_request_error");
+        return;
+    }
+    if (RAC_FAILED(rc)) {
+        sendError(res, 500, "embeddings failed", "server_error");
+        return;
+    }
+    std::string embedModel = embeddingsModelId_;
+    if (body.contains("model")) {
+        embedModel = body["model"].get<std::string>();
+    }
+    nlohmann::json out;
+    out["object"] = "list";
+    out["model"] = embedModel;
+    out["data"] = nlohmann::json::array();
+    int32_t totalTokens = 0;
+    if (embResult.embeddings) {
+        for (size_t i = 0; i < embResult.num_embeddings; ++i) {
+            nlohmann::json obj;
+            obj["object"] = "embedding";
+            obj["index"] = static_cast<int>(i);
+            if (embResult.embeddings[i].data) {
+                std::vector<float> vec(embResult.embeddings[i].data,
+                                       embResult.embeddings[i].data + embResult.embeddings[i].dimension);
+                obj["embedding"] = vec;
+            } else {
+                obj["embedding"] = nlohmann::json::array();
+            }
+            out["data"].push_back(obj);
+        }
+        totalTokens = embResult.total_tokens;
+    }
+    out["usage"] = nlohmann::json::object({
+        {"prompt_tokens", totalTokens},
+        {"total_tokens", totalTokens}
+    });
+    res.set_content(out.dump(), "application/json");
+    res.status = 200;
+    rac_embeddings_result_free(&embResult);
+}
+
 void OpenAIHandler::processNonStreaming(const httplib::Request& /*req*/,
                                          httplib::Response& res,
                                          const nlohmann::json& requestJson) {
+#ifndef RAC_HAS_LLAMACPP
+    sendError(res, 501, "chat completions not available: LlamaCPP backend not built", "not_implemented");
+    return;
+#else
     RAC_LOG_INFO("Server", "processNonStreaming: START");
 
     // Get messages and tools from request
@@ -228,11 +584,16 @@ void OpenAIHandler::processNonStreaming(const httplib::Request& /*req*/,
 
     res.set_content(jsonResponse.dump(), "application/json");
     res.status = 200;
+#endif // RAC_HAS_LLAMACPP
 }
 
 void OpenAIHandler::processStreaming(const httplib::Request& /*req*/,
                                       httplib::Response& res,
                                       const nlohmann::json& requestJson) {
+#ifndef RAC_HAS_LLAMACPP
+    sendError(res, 501, "chat completions not available: LlamaCPP backend not built", "not_implemented");
+    return;
+#else
     // Get messages and tools from request
     const auto& messages = requestJson["messages"];
     nlohmann::json tools = requestJson.value("tools", nlohmann::json::array());
@@ -364,6 +725,7 @@ void OpenAIHandler::processStreaming(const httplib::Request& /*req*/,
     );
 
     res.status = 200;
+#endif // RAC_HAS_LLAMACPP
 }
 
 rac_llm_options_t OpenAIHandler::parseOptions(const nlohmann::json& requestJson) {

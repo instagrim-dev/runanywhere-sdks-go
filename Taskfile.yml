@@ -1,0 +1,211 @@
+# Taskfile - RunAnywhere SDKs
+# Install: https://taskfile.dev/install  (e.g. go install github.com/go-task/task/v3/cmd/task@latest)
+# Run:    task --list
+
+version: "3"
+
+vars:
+  COMMONS_DIR: sdk/runanywhere-commons
+  # Server binary path relative to COMMONS_DIR (used when dir: COMMONS_DIR)
+  SERVER_BIN: build-server/tools/runanywhere-server
+  # Default LLM for e2e (path inside container when Models dir is mounted at /src/models)
+  E2E_MODEL_IN_CONTAINER: /src/models/LlamaCpp/qwen3-0.6b/Qwen3-0.6B-Q8_0.gguf
+
+env:
+  RAC_SERVER_BIN: "{{.SERVER_BIN}}"
+
+tasks:
+  # ---------------------------------------------------------------------------
+  # C++ runanywhere-server (OpenAI-compatible HTTP server)
+  # ---------------------------------------------------------------------------
+
+  server:build:
+    desc: Build runanywhere-server (build-server/tools/runanywhere-server)
+    dir: "{{.COMMONS_DIR}}"
+    cmds:
+      - ./scripts/build-server.sh
+
+  server:build-docker:
+    desc: "Build runanywhere-server inside Docker (Linux binary; LlamaCPP only)"
+    cmds:
+      - docker build -f {{.COMMONS_DIR}}/Dockerfile.server -t runanywhere-server-builder {{.COMMONS_DIR}}
+      - rm -rf {{.COMMONS_DIR}}/build-server
+      - docker run --rm -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" -w /src runanywhere-server-builder
+      - chmod +x {{.COMMONS_DIR}}/build-server/tools/runanywhere-server
+
+  server:smoke:
+    desc: Smoke test server binary (--help, no model; run on host)
+    dir: "{{.COMMONS_DIR}}"
+    preconditions:
+      - test -x {{.SERVER_BIN}} || (echo "Run task server:build first" && exit 1)
+    cmds:
+      - ./scripts/smoke-test-server.sh
+
+  server:smoke-docker:
+    desc: "Smoke test server binary inside Docker (for Linux binary from server:build-docker)"
+    dir: "{{.COMMONS_DIR}}"
+    preconditions:
+      - test -x {{.SERVER_BIN}} || (echo "Run task server:build-docker first" && exit 1)
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" -w /src runanywhere-server-builder ./build-server/tools/runanywhere-server --help
+
+  server:integration-docker:
+    desc: "Integration test in Docker (start server, GET /health). Usage: task server:integration-docker -- /src/path/to/model.gguf"
+    dir: "{{.COMMONS_DIR}}"
+    preconditions:
+      - test -x {{.SERVER_BIN}} || (echo "Run task server:build-docker first" && exit 1)
+    cmds:
+      - docker run --rm -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" -w /src runanywhere-server-builder ./scripts/smoke-test-server.sh {{.CLI_ARGS}}
+
+  server:integration:
+    desc: "Integration test (start server, GET /health). Usage: task server:integration -- /path/to/model.gguf"
+    dir: "{{.COMMONS_DIR}}"
+    preconditions:
+      - test -x {{.SERVER_BIN}} || (echo "Run task server:build first" && exit 1)
+    cmds:
+      - ./scripts/smoke-test-server.sh {{.CLI_ARGS}}
+
+  server:build-and-smoke:
+    desc: Build server then run smoke test
+    deps:
+      - server:build
+      - server:smoke
+
+  server:build-and-integration:
+    desc: "Build server then run integration test. Usage: task server:build-and-integration -- /path/to/model.gguf"
+    dir: "{{.COMMONS_DIR}}"
+    deps:
+      - server:build
+    cmds:
+      - ./scripts/smoke-test-server.sh {{.CLI_ARGS}}
+
+  # ---------------------------------------------------------------------------
+  # E2E: download model, build, integration test
+  # ---------------------------------------------------------------------------
+
+  server:download-model:
+    desc: "Download Qwen3 0.6B GGUF to ~/.local/share/runanywhere/Models (skips if present)"
+    dir: "{{.COMMONS_DIR}}"
+    cmds:
+      - ./tests/scripts/download-test-models.sh --skip-wakeword
+
+  server:e2e-docker:
+    desc: "E2E in Docker: build server, ensure model, run integration (start server + GET /health)"
+    deps:
+      - server:build-docker
+      - server:download-model
+    cmds:
+      - |
+        docker run --rm \
+          -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" \
+          -v "$${HOME}/.local/share/runanywhere/Models:/src/models:ro" \
+          -w /src \
+          runanywhere-server-builder \
+          ./scripts/smoke-test-server.sh {{.E2E_MODEL_IN_CONTAINER}}
+
+  server:clean-build:
+    desc: Remove build-server dir (use before native build if it was created by Docker)
+    cmds:
+      - rm -rf {{.COMMONS_DIR}}/build-server
+
+  server:build-after-clean:
+    desc: Clean then build (for e2e when build-server may have Docker cache)
+    deps:
+      - server:clean-build
+    dir: "{{.COMMONS_DIR}}"
+    cmds:
+      - ./scripts/build-server.sh
+
+  server:e2e:
+    desc: "E2E on host: build server, ensure model, run integration. Requires native build (e.g. macOS)."
+    deps:
+      - server:build-after-clean
+      - server:download-model
+    dir: "{{.COMMONS_DIR}}"
+    cmds:
+      - sh -c './scripts/smoke-test-server.sh "$HOME/.local/share/runanywhere/Models/LlamaCpp/qwen3-0.6b/Qwen3-0.6B-Q8_0.gguf"'
+
+  # ---------------------------------------------------------------------------
+  # Go device package: runanywhere-commons shared libs (macOS)
+  # ---------------------------------------------------------------------------
+
+  device:commons-macos:
+    desc: "Build runanywhere-commons shared libs on macOS and populate dist/darwin/<arch> (for Go device package)"
+    dir: "{{.COMMONS_DIR}}"
+    preconditions:
+      - uname -s | grep -q Darwin || (echo "macOS only; use build-linux.sh on Linux" && exit 1)
+    cmds:
+      - cmake -B build-shared -DCMAKE_BUILD_TYPE=Release -DRAC_BUILD_SHARED=ON -DRAC_BUILD_BACKENDS=ON -DRAC_BACKEND_LLAMACPP=ON
+      - cmake --build build-shared -j
+      - |
+        ARCH=$(uname -m)
+        DIST="dist/darwin/${ARCH}"
+        mkdir -p "$DIST"
+        if [ -f build-shared/librac_commons.dylib ]; then
+          cp build-shared/librac_commons.dylib "$DIST/"
+        fi
+        if [ -f build-shared/src/backends/llamacpp/librac_backend_llamacpp.dylib ]; then
+          cp build-shared/src/backends/llamacpp/librac_backend_llamacpp.dylib "$DIST/"
+        fi
+        if [ -f build-shared/src/backends/onnx/librac_backend_onnx.dylib ]; then
+          cp build-shared/src/backends/onnx/librac_backend_onnx.dylib "$DIST/"
+        fi
+        mkdir -p "$DIST/include"
+        cp -R include/rac "$DIST/include/"
+        echo "Dist: $DIST"
+        ls -la "$DIST"
+
+  device:build-go:
+    desc: "Build Go SDK with CGO using commons dist (requires device:commons-macos first on macOS)"
+    dir: "{{.ROOT_DIR}}/sdk/runanywhere-go"
+    preconditions:
+      - test -d {{.COMMONS_DIR}}/dist/darwin/$(uname -m) || (echo "Run task device:commons-macos first" && exit 1)
+    vars:
+      ARCH:
+        sh: uname -m
+    env:
+      CGO_ENABLED: "1"
+      RAC_COMMONS_LIB: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}"
+      RAC_COMMONS_INCLUDE: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_CPPFLAGS: "-I{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_LDFLAGS: "-L{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -Wl,-rpath,{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -lrac_commons -lrac_backend_llamacpp"
+    cmds:
+      - go build ./...
+
+  device:tests:
+    desc: "Run Go SDK tests with CGO (device package). Requires commons dist; run device:commons-macos first."
+    dir: "{{.ROOT_DIR}}/sdk/runanywhere-go"
+    preconditions:
+      - uname -s | grep -q Darwin || (echo "macOS only" && exit 1)
+      - test -d {{.COMMONS_DIR}}/dist/darwin/$(uname -m) || (echo "Run task device:commons-macos first" && exit 1)
+    vars:
+      ARCH:
+        sh: uname -m
+    env:
+      CGO_ENABLED: "1"
+      RAC_COMMONS_LIB: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}"
+      RAC_COMMONS_INCLUDE: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_CPPFLAGS: "-I{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_LDFLAGS: "-L{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -Wl,-rpath,{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -lrac_commons -lrac_backend_llamacpp"
+      DYLD_LIBRARY_PATH: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}"
+    cmds:
+      - go test ./... -count=1 -v
+
+  device:test-go:
+    desc: "Build commons, then build and test Go SDK (CGO). Full pipeline for device tests."
+    dir: "{{.ROOT_DIR}}/sdk/runanywhere-go"
+    deps:
+      - device:commons-macos
+    vars:
+      ARCH:
+        sh: uname -m
+    env:
+      CGO_ENABLED: "1"
+      RAC_COMMONS_LIB: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}"
+      RAC_COMMONS_INCLUDE: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_CPPFLAGS: "-I{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}/include"
+      CGO_LDFLAGS: "-L{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -Wl,-rpath,{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}} -lrac_commons -lrac_backend_llamacpp"
+      DYLD_LIBRARY_PATH: "{{.ROOT_DIR}}/{{.COMMONS_DIR}}/dist/darwin/{{.ARCH}}"
+    cmds:
+      - go build ./...
+      - go test ./... -count=1 -v

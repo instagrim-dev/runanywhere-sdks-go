@@ -358,8 +358,17 @@ export class OPFSStorage {
       const buf = await blob.arrayBuffer();
       const handle = await this.modelsDir.getFileHandle(OPFSStorage.METADATA_FILENAME, { create: true });
       const writable = await handle.createWritable();
-      await writable.write(buf);
-      await writable.close();
+      try {
+        await writable.write(buf);
+        await writable.close();
+      } catch (err) {
+        try {
+          await writable.abort();
+        } catch (abortErr) {
+          logger.warning(`Failed to abort writable: ${abortErr}`);
+        }
+        throw err;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warning(`Failed to save metadata: ${msg}`);

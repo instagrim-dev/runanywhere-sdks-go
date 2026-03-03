@@ -80,6 +80,15 @@ typedef struct rac_server_config {
 
     /** Verbose logging (default: false) */
     rac_bool_t verbose;
+
+    /** Optional path to STT model for /v1/audio/transcriptions (NULL = endpoint returns 501) */
+    const char* stt_model_path;
+
+    /** Optional path to TTS model/voice for /v1/audio/speech (NULL = endpoint returns 501) */
+    const char* tts_model_path;
+
+    /** Optional path or ID for embeddings model for /v1/embeddings (NULL = endpoint returns 501) */
+    const char* embeddings_model_path;
 } rac_server_config_t;
 
 /**
@@ -97,7 +106,10 @@ static const rac_server_config_t RAC_SERVER_CONFIG_DEFAULT = {
     .cors_origins = "*",
     .request_timeout_seconds = 300,
     .max_concurrent_requests = 4,
-    .verbose = RAC_FALSE
+    .verbose = RAC_FALSE,
+    .stt_model_path = RAC_NULL,
+    .tts_model_path = RAC_NULL,
+    .embeddings_model_path = RAC_NULL
 };
 
 // =============================================================================

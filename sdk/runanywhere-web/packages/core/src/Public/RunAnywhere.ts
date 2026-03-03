@@ -197,6 +197,7 @@ export const RunAnywhere = {
       input.accept = acceptExts.join(',');
       input.style.display = 'none';
       let settled = false;
+      let importing = false;
 
       const cleanup = () => {
         if (input.parentNode) {
@@ -214,6 +215,7 @@ export const RunAnywhere = {
       input.onchange = async () => {
         const file = input.files?.[0];
         if (!file) { settle(null); return; }
+        importing = true;
         try {
           const id = await this.importModelFromFile(file, options);
           settle(id);
@@ -231,7 +233,7 @@ export const RunAnywhere = {
       const fallbackCleanup = () => {
         // Wait a tick — onchange fires after focus returns
         setTimeout(() => {
-          if (!settled) {
+          if (!settled && !importing) {
             settle(null);
           }
         }, 300);

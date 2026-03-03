@@ -388,6 +388,12 @@ tools/
 sdk/runanywhere-react-native/packages/rag/ios/.testlocal
 
 
+# Go SDK - example build artifacts (go build -o <name> .)
+sdk/runanywhere-go/examples/basic-chat/basic-chat
+sdk/runanywhere-go/examples/transcribe/transcribe
+sdk/runanywhere-go/examples/embeddings/embeddings
+sdk/runanywhere-go/examples/device-chat/device-chat
+
 # Node
 node_modules/
 /tools/

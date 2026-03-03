@@ -1,0 +1,35 @@
+# =============================================================================
+# Dockerfile.server - Build runanywhere-server in a Linux container
+# =============================================================================
+# Builds the OpenAI-compatible HTTP server (LlamaCPP only; no ONNX) so the
+# build is self-contained and does not require macOS.
+#
+# Build image (from repo root):
+#   docker build -f sdk/runanywhere-commons/Dockerfile.server -t runanywhere-server-builder sdk/runanywhere-commons
+#
+# Run build (mount source; build-server/ will appear in sdk/runanywhere-commons):
+#   docker run --rm -v "$(pwd)/sdk/runanywhere-commons:/src" -w /src runanywhere-server-builder
+#
+# Or use: task server:build-docker
+# =============================================================================
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use gcc/g++ (AGENTS.md: clang on Linux may lack libc++ headers)
+ENV CC=gcc
+ENV CXX=g++
+
+WORKDIR /src
+
+# Source is mounted at /src when running. Configure and build server (LlamaCPP only).
+CMD ["/bin/sh", "-c", "cmake -B build-server -S . -DCMAKE_BUILD_TYPE=Release -DRAC_BUILD_SERVER=ON -DRAC_BUILD_BACKENDS=ON -DRAC_BACKEND_LLAMACPP=ON -DRAC_BACKEND_ONNX=OFF -DRAC_BACKEND_RAG=OFF -DRAC_BUILD_PLATFORM=OFF && cmake --build build-server -j$(nproc) && chmod +x build-server/tools/runanywhere-server && echo 'Build successful: build-server/tools/runanywhere-server'"]

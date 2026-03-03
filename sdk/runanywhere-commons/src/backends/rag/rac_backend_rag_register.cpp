@@ -28,19 +28,15 @@ extern "C" {
 rac_result_t rac_backend_rag_register(void) {
     LOGI("Registering RAG backend module...");
 
-    // Register module
-    rac_capability_t capabilities[] = {
-        // RAG doesn't register as a service provider yet
-        // It's a higher-level pipeline using existing services
-    };
-
+    // RAG doesn't register as a service provider yet; it's a higher-level pipeline using existing services.
+    // Pass nullptr for capabilities when num_capabilities is 0 (zero-size array is invalid in C++).
     rac_module_info_t module_info = {
-        .id = MODULE_ID,
-        .name = MODULE_NAME,
-        .version = MODULE_VERSION,
-        .description = MODULE_DESC,
-        .capabilities = capabilities,
-        .num_capabilities = 0
+        MODULE_ID,
+        MODULE_NAME,
+        MODULE_VERSION,
+        MODULE_DESC,
+        nullptr,  // capabilities
+        0         // num_capabilities
     };
 
     rac_result_t result = rac_module_register(&module_info);

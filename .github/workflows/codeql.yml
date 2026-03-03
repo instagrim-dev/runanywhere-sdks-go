@@ -24,8 +24,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # C++ autobuild fails (no root package.json); use manual build so CodeQL traces our CMake build.
           - language: c-cpp
-            build-mode: autobuild
+            build-mode: manual
           - language: javascript-typescript
             build-mode: none
           - language: ruby
@@ -43,6 +44,16 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+
+      # Manual build step for C++ (CodeQL traces this to build the analysis database)
+      - name: Build C++ (runanywhere-commons)
+        if: matrix.language == 'c-cpp' && matrix.build-mode == 'manual'
+        run: |
+          cd sdk/runanywhere-commons
+          ./scripts/build-server.sh --release
+        env:
+          CC: gcc
+          CXX: g++
 
       # Manual build step for Swift
       - name: Build Swift Package

@@ -35,8 +35,8 @@ func TestChatCompletionRequestRoundTrip(t *testing.T) {
 		Temperature: 0.7,
 		MaxTokens:   100,
 		Tools: []ToolDefinition{{
-			Type: "function",
-			Function: FunctionDefinition{Name: "f", Description: "d", Parameters: map[string]interface{}{"type": "object"}},
+			Type:     "function",
+			Function: FunctionDefinition{Name: "f", Description: "d", Parameters: map[string]any{"type": "object"}},
 		}},
 	}
 	b, err := json.Marshal(in)

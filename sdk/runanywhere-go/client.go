@@ -199,7 +199,7 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingsRequest) (*Embed
 }
 
 // doBytesResponse performs a request and returns the response body as bytes (for binary responses).
-func (c *Client) doBytesResponse(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
+func (c *Client) doBytesResponse(ctx context.Context, method, path string, body any) ([]byte, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -223,7 +223,7 @@ func (c *Client) doBytesResponse(ctx context.Context, method, path string, body 
 	return io.ReadAll(resp.Body)
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
+func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -252,7 +252,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 	return nil
 }
 
-func (c *Client) doStream(ctx context.Context, method, path string, body interface{}) (io.ReadCloser, error) {
+func (c *Client) doStream(ctx context.Context, method, path string, body any) (io.ReadCloser, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

@@ -31,8 +31,8 @@ type ChatMessage struct {
 
 // ChatMessageToolCall is a tool call in an assistant message.
 type ChatMessageToolCall struct {
-	ID       string                 `json:"id"`
-	Type     string                 `json:"type"`
+	ID       string                  `json:"id"`
+	Type     string                  `json:"type"`
 	Function ChatMessageToolCallFunc `json:"function"`
 }
 
@@ -44,30 +44,30 @@ type ChatMessageToolCallFunc struct {
 
 // ToolDefinition is a tool (function) the model may call (OpenAI ChatCompletionTool).
 type ToolDefinition struct {
-	Type     string              `json:"type"`
-	Function FunctionDefinition  `json:"function"`
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
 }
 
 // FunctionDefinition describes a callable function.
 type FunctionDefinition struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	Parameters  interface{} `json:"parameters,omitempty"` // JSON Schema object
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"` // JSON Schema object
 }
 
 // ChatCompletionRequest is the request body for POST /v1/chat/completions.
 type ChatCompletionRequest struct {
-	Model            string            `json:"model"`
-	Messages         []ChatMessage     `json:"messages"`
-	Stream           bool               `json:"stream,omitempty"`
-	Temperature      float32           `json:"temperature,omitempty"`
-	TopP             float32           `json:"top_p,omitempty"`
-	MaxTokens        int               `json:"max_tokens,omitempty"`
-	Stop             []string           `json:"stop,omitempty"`
-	PresencePenalty  float32           `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32           `json:"frequency_penalty,omitempty"`
-	Tools            []ToolDefinition  `json:"tools,omitempty"`
-	ToolChoice       interface{}       `json:"tool_choice,omitempty"` // "none" | "auto" | "required" | { "type": "function", "function": { "name": "..." } }
+	Model            string           `json:"model"`
+	Messages         []ChatMessage    `json:"messages"`
+	Stream           bool             `json:"stream,omitempty"`
+	Temperature      float32          `json:"temperature,omitempty"`
+	TopP             float32          `json:"top_p,omitempty"`
+	MaxTokens        int              `json:"max_tokens,omitempty"`
+	Stop             []string         `json:"stop,omitempty"`
+	PresencePenalty  float32          `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float32          `json:"frequency_penalty,omitempty"`
+	Tools            []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice       any              `json:"tool_choice,omitempty"` // "none" | "auto" | "required" | { "type": "function", "function": { "name": "..." } }
 	User             string           `json:"user,omitempty"`
 }
 
@@ -83,9 +83,9 @@ type ChatCompletionResponse struct {
 
 // Choice is a single choice in a chat completion response.
 type Choice struct {
-	Index        int            `json:"index"`
-	Message      ChatMessage    `json:"message"`
-	FinishReason string         `json:"finish_reason"`
+	Index        int         `json:"index"`
+	Message      ChatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
 }
 
 // Usage is token usage statistics.
@@ -99,18 +99,18 @@ type Usage struct {
 
 // StreamChunk is a single SSE chunk (chat.completion.chunk).
 type StreamChunk struct {
-	ID      string           `json:"id"`
-	Object  string           `json:"object"`
-	Created int64            `json:"created"`
-	Model   string           `json:"model"`
-	Choices []StreamChoice   `json:"choices"`
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []StreamChoice `json:"choices"`
 }
 
 // StreamChoice is a choice in a streaming chunk.
 type StreamChoice struct {
-	Index        int          `json:"index"`
-	Delta        StreamDelta  `json:"delta"`
-	FinishReason *string      `json:"finish_reason,omitempty"`
+	Index        int         `json:"index"`
+	Delta        StreamDelta `json:"delta"`
+	FinishReason *string     `json:"finish_reason,omitempty"`
 }
 
 // StreamDelta is the delta content in a streaming chunk.
@@ -157,8 +157,8 @@ func (e *errorCodeFlex) UnmarshalJSON(data []byte) error {
 // ErrorResponse is the body of 4xx/5xx responses (OpenAI-style).
 type ErrorResponse struct {
 	Error struct {
-		Message string       `json:"message"`
-		Type    string       `json:"type"`
+		Message string        `json:"message"`
+		Type    string        `json:"type"`
 		Code    errorCodeFlex `json:"code,omitempty"`
 	} `json:"error"`
 }
@@ -174,9 +174,9 @@ type TranscriptionResponse struct {
 
 // TranscribeOptions are optional parameters for Transcribe.
 type TranscribeOptions struct {
-	Model           string `json:"model,omitempty"`
-	Language        string `json:"language,omitempty"`
-	ResponseFormat  string `json:"response_format,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Language       string `json:"language,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
 }
 
 // SpeechRequest is the request body for POST /v1/audio/speech.
@@ -190,8 +190,8 @@ type SpeechRequest struct {
 
 // EmbeddingsRequest is the request body for POST /v1/embeddings.
 type EmbeddingsRequest struct {
-	Model string      `json:"model"`
-	Input interface{} `json:"input"` // string or []string
+	Model string `json:"model"`
+	Input any    `json:"input"` // string or []string
 }
 
 // EmbeddingData is a single embedding in the response.

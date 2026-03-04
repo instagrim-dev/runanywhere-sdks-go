@@ -62,8 +62,8 @@ func (r *ChatStreamReader) Next() (*StreamChunk, error) {
 			}
 			return chunk, nil
 		}
-		if strings.HasPrefix(line, "data:") {
-			payload := strings.TrimPrefix(line, "data:")
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			payload := after
 			payload = strings.TrimPrefix(payload, " ") // accept "data: " or "data:"
 			dataLines = append(dataLines, payload)
 		}

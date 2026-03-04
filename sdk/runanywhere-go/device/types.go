@@ -1,7 +1,8 @@
 package device
 
 // Config holds options for device initialization. Pass to InitWithConfig.
-// Zero value uses defaults (e.g. register all built backends).
+// Zero value registers only the LlamaCPP backend (LLM). Set RegisterONNX
+// to true to also register the ONNX backend (STT/TTS/Embeddings).
 type Config struct {
 	// LogLevel controls when the platform adapter forwards log messages from
 	// the C layer. 0 means default (INFO). Higher values = less verbose

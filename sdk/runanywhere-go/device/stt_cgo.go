@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"runtime/cgo"
@@ -97,15 +98,11 @@ type sttStreamChunk struct {
 // sttStreamIter implements STTStreamIterator for TranscribeStream.
 type sttStreamIter struct {
 	ch     <-chan sttStreamChunk
-	closed bool
-	mu     sync.Mutex
+	closed atomic.Bool
 }
 
 func (it *sttStreamIter) Next() (text string, isFinal bool, err error) {
-	it.mu.Lock()
-	closed := it.closed
-	it.mu.Unlock()
-	if closed {
+	if it.closed.Load() {
 		return "", true, nil
 	}
 	chunk, ok := <-it.ch
@@ -118,12 +115,7 @@ func (it *sttStreamIter) Next() (text string, isFinal bool, err error) {
 // Close marks the iterator closed. The C STT backend does not expose cancellation;
 // the underlying stream may continue until completion.
 func (it *sttStreamIter) Close() error {
-	it.mu.Lock()
-	defer it.mu.Unlock()
-	if it.closed {
-		return nil
-	}
-	it.closed = true
+	it.closed.Store(true)
 	return nil
 }
 

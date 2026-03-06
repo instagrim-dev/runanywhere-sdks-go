@@ -372,6 +372,11 @@ func (b *wasmBrowserBackend) callBridgeStream(method string, argsJSON string) (c
 		close(ch)
 		return ch, onChunk.Release
 	}
+	if err := bridgeCallSafe(bridge, method, argsJSON, onChunk); err != nil {
+		ch <- wasmStreamChunk{Err: err}
+		close(ch)
+		return ch, onChunk.Release
+	}
 	go func() {
 		retryTicker := time.NewTicker(2 * time.Millisecond)
 		defer retryTicker.Stop()
@@ -426,12 +431,6 @@ func (b *wasmBrowserBackend) callBridgeStream(method string, argsJSON string) (c
 			close(stopDrainCh)
 			onChunk.Release()
 		})
-	}
-	if err := bridgeCallSafe(bridge, method, argsJSON, onChunk); err != nil {
-		ch <- wasmStreamChunk{Err: err}
-		close(ch)
-		close(stopDrainCh)
-		return ch, onChunk.Release
 	}
 	return ch, releaseChunk
 }

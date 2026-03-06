@@ -98,7 +98,7 @@ tasks:
       - |
         docker run --rm \
           -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" \
-          -v "$HOME/.local/share/runanywhere/Models:/src/models:ro" \
+          -v "$${HOME}/.local/share/runanywhere/Models:/src/models:ro" \
           -w /src \
           runanywhere-server-builder \
           ./scripts/smoke-test-server.sh {{.E2E_MODEL_IN_CONTAINER}}

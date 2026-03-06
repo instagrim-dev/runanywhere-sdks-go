@@ -193,12 +193,9 @@ func (it *wasiLLMStreamIterator) Next() (token string, isFinal bool, err error) 
 		return "", true, io.EOF
 	}
 
-	// Parse chunk JSON
-	var frame struct {
-		Text string `json:"text"`
-		Done bool   `json:"done"`
-	}
-	if err := json.Unmarshal(chunk, &frame); err != nil {
+	// Parse chunk as a StreamFrame (wire format: {modality, payload: {text}, done}).
+	frame, parseErr := ParseStreamFrame(chunk)
+	if parseErr != nil {
 		return string(chunk), false, nil // fallback: treat as raw text
 	}
 
@@ -206,10 +203,10 @@ func (it *wasiLLMStreamIterator) Next() (token string, isFinal bool, err error) 
 		it.mu.Lock()
 		it.done = true
 		it.mu.Unlock()
-		return frame.Text, true, io.EOF
+		return frame.Payload.Text, true, io.EOF
 	}
 
-	return frame.Text, false, nil
+	return frame.Payload.Text, false, nil
 }
 
 func (it *wasiLLMStreamIterator) Close() error {

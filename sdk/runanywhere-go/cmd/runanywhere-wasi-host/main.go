@@ -296,7 +296,8 @@ type generateRequest struct {
 }
 
 type embedBatchRequest struct {
-	Texts []string `json:"texts"`
+	Handle int64    `json:"handle"`
+	Texts  []string `json:"texts"`
 }
 
 type closeRequest struct {

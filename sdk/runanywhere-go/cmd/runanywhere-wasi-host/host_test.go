@@ -219,11 +219,17 @@ func TestStreamLLM(t *testing.T) {
 	h := newHostHandler("")
 
 	// Create LLM handle first
-	h.handleCall("llm.create", []byte(`{"modelPath":"/models/test.gguf"}`))
+	createResp := h.handleCall("llm.create", []byte(`{"modelPath":"/models/test.gguf"}`))
+	var created struct {
+		Handle int64 `json:"handle"`
+	}
+	if err := json.Unmarshal(createResp, &created); err != nil {
+		t.Fatalf("failed to parse llm.create response: %v", err)
+	}
 
 	// Start stream
 	req, _ := json.Marshal(map[string]interface{}{
-		"handle": 2, // first allocID (after create's allocID)
+		"handle": created.Handle,
 		"prompt": "test",
 	})
 	stream := h.handleStreamStart("llm.generate_stream", req)

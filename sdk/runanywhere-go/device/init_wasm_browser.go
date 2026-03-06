@@ -250,7 +250,10 @@ func (b *wasmBrowserBackend) callBridgeSync(method string, argsJSON string) (str
 		release()
 		return "", err
 	case <-timer.C:
-		release()
+		// Do NOT call release() here. The JS bridge may still invoke the
+		// callback after the timeout, and calling Release() on a js.Func
+		// makes subsequent invocations panic the WASM runtime. The callback
+		// self-releases via defer release() when (and if) the bridge calls it.
 		return "", &RACError{
 			Code:    ErrCodeTimeout,
 			Message: "bridge call timed out: " + method,
@@ -429,7 +432,10 @@ func (b *wasmBrowserBackend) callBridgeStream(method string, argsJSON string) (c
 			queue = nil
 			queueMu.Unlock()
 			close(stopDrainCh)
-			onChunk.Release()
+			// Do NOT call onChunk.Release() here. The JS bridge may still
+			// deliver chunks asynchronously after the consumer cancels.
+			// Invoking a released js.Func panics the WASM runtime. Late
+			// invocations safely hit the closed guard in enqueue and discard.
 		})
 	}
 	return ch, releaseChunk

@@ -196,7 +196,7 @@ func (b *wasmBrowserBackend) callBridgeSync(method string, argsJSON string) (str
 		firstArg := callbackArgs[0]
 		if firstArg.Type() == js.TypeObject {
 			errObj := firstArg.Get("error")
-			if !errObj.IsUndefined() {
+			if !errObj.IsUndefined() && !errObj.IsNull() {
 				select {
 				case errCh <- &RACError{Code: ErrCodeWASMError, Message: "bridge error: " + errObj.String()}:
 				default:

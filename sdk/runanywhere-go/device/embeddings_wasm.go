@@ -5,6 +5,7 @@ package device
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -146,14 +147,21 @@ func (e *wasmEmbeddings) EmbedBatch(ctx context.Context, texts []string, opts *E
 	if err != nil {
 		return nil, &RACError{Code: ErrCodeInvalidParam, Message: "failed to marshal embeddingsEmbedBatch args: " + err.Error()}
 	}
-	if result, err := e.backend.callBridgeSync("embeddingsEmbedBatch", string(argsJSON)); err == nil {
+	result, callErr := e.backend.callBridgeSync("embeddingsEmbedBatch", string(argsJSON))
+	if callErr == nil {
 		var batchResult struct {
 			Success    bool        `json:"success"`
 			Embeddings [][]float32 `json:"embeddings"`
 			Dimension  int         `json:"dimension"`
 			Error      string      `json:"error"`
 		}
-		if err := json.Unmarshal([]byte(result), &batchResult); err == nil && batchResult.Success {
+		if unmarshalErr := json.Unmarshal([]byte(result), &batchResult); unmarshalErr != nil {
+			return nil, &RACError{
+				Code:    ErrCodeWASMError,
+				Message: "failed to parse embeddingsEmbedBatch result: " + unmarshalErr.Error(),
+			}
+		}
+		if batchResult.Success {
 			dim := batchResult.Dimension
 			if dim == 0 && len(batchResult.Embeddings) > 0 {
 				dim = len(batchResult.Embeddings[0])
@@ -162,12 +170,20 @@ func (e *wasmEmbeddings) EmbedBatch(ctx context.Context, texts []string, opts *E
 				Embeddings: batchResult.Embeddings,
 				Dimension:  dim,
 			}, nil
-		} else if err == nil && !batchResult.Success && batchResult.Error != "" {
-			return nil, &RACError{
-				Code:    ErrCodeGenerationFailed,
-				Message: batchResult.Error,
-			}
 		}
+		errMsg := batchResult.Error
+		if errMsg == "" {
+			errMsg = "embeddingsEmbedBatch returned success=false"
+		}
+		return nil, &RACError{
+			Code:    ErrCodeGenerationFailed,
+			Message: errMsg,
+		}
+	}
+	// ErrCodeUnsupported means the bridge lacks batch support — fall through to single-embed.
+	var racErr *RACError
+	if !(errors.As(callErr, &racErr) && racErr.Code == ErrCodeUnsupported) {
+		return nil, callErr
 	}
 
 	// Backward-compatible fallback for older bridges without batch support.

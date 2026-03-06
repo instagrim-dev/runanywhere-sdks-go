@@ -259,7 +259,17 @@
         return { abort: function () {} };
       }
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const headers = typeof opts.headers === 'string' ? (opts.headers ? JSON.parse(opts.headers) : {}) : opts.headers || {};
+      let headers = {};
+      if (typeof opts.headers === 'string' && opts.headers) {
+        try {
+          headers = JSON.parse(opts.headers);
+        } catch (e) {
+          callback(-1, '{}', '', 'invalid headers JSON: ' + e.message);
+          return { abort: function () {} };
+        }
+      } else {
+        headers = opts.headers || {};
+      }
       const bodyBytes = base64ToUint8Array(opts.body);
       const body = bodyBytes ? bodyBytes.buffer : undefined;
       fetch(url, { method: opts.method || 'GET', headers, body, signal: controller ? controller.signal : undefined })

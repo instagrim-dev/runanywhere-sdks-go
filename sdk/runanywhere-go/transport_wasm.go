@@ -20,7 +20,7 @@ import (
 //	}))
 //
 // The host or bridge must define __RunAnywhereFetch(url, options, callback) where
-// options is { method, headers: {...}, body: base64String } and callback(statusCode, headersJson, bodyBase64, errorMsg) is called when the fetch completes.
+// options is { method, headers: "jsonString", body: "base64String" } and callback(statusCode, headersJson, bodyBase64, errorMsg) is called when the fetch completes.
 // The function may return an object with abort() to support cancellation.
 func DefaultWASMTransport() http.RoundTripper {
 	return &wasmTransport{}
@@ -30,8 +30,8 @@ type wasmTransport struct{}
 
 func (t *wasmTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	fetch := js.Global().Get("__RunAnywhereFetch")
-	if fetch.IsUndefined() {
-		return nil, &transportError{msg: "__RunAnywhereFetch is not defined"}
+	if fetch.IsUndefined() || fetch.Type() != js.TypeFunction {
+		return nil, &transportError{msg: "__RunAnywhereFetch is not defined or not a function"}
 	}
 
 	type result struct {

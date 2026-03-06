@@ -204,8 +204,14 @@ func (b *wasmBrowserBackend) callBridgeSync(method string, argsJSON string) (str
 				return nil
 			}
 		}
+		var resultStr string
+		if firstArg.Type() == js.TypeObject {
+			resultStr = js.Global().Get("JSON").Call("stringify", firstArg).String()
+		} else {
+			resultStr = firstArg.String()
+		}
 		select {
-		case resultCh <- firstArg.String():
+		case resultCh <- resultStr:
 		default:
 		}
 		return nil
@@ -221,7 +227,10 @@ func (b *wasmBrowserBackend) callBridgeSync(method string, argsJSON string) (str
 		}
 	}
 
-	bridge.Call(method, argsJSON, callback)
+	if err := bridgeCallSafe(bridge, method, argsJSON, callback); err != nil {
+		release()
+		return "", err
+	}
 
 	// Use configurable timeout; default 30s
 	timeout := 30 * time.Second
@@ -241,6 +250,7 @@ func (b *wasmBrowserBackend) callBridgeSync(method string, argsJSON string) (str
 		release()
 		return "", err
 	case <-timer.C:
+		release()
 		return "", &RACError{
 			Code:    ErrCodeTimeout,
 			Message: "bridge call timed out: " + method,
@@ -417,8 +427,27 @@ func (b *wasmBrowserBackend) callBridgeStream(method string, argsJSON string) (c
 			onChunk.Release()
 		})
 	}
-	bridge.Call(method, argsJSON, onChunk)
+	if err := bridgeCallSafe(bridge, method, argsJSON, onChunk); err != nil {
+		ch <- wasmStreamChunk{Err: err}
+		close(ch)
+		close(stopDrainCh)
+		return ch, onChunk.Release
+	}
 	return ch, releaseChunk
+}
+
+// bridgeCallSafe looks up method on the bridge object and calls it with args.
+// Returns ErrCodeUnsupported if the method is missing or not a function.
+func bridgeCallSafe(bridge js.Value, method string, args ...any) error {
+	m := bridge.Get(method)
+	if m.IsUndefined() || m.Type() != js.TypeFunction {
+		return &RACError{
+			Code:    ErrCodeUnsupported,
+			Message: "bridge method not supported: " + method,
+		}
+	}
+	m.Invoke(args...)
+	return nil
 }
 
 // configToJSON converts the config to JSON for the bridge.

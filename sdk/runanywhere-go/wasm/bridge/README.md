@@ -24,14 +24,14 @@ The bridge object must expose these methods. All async methods accept a **callba
 
 - **createLLM(argsJson)** — args: `{modelPath, options}`. Callback: `{"success":true,"handle":number}` or `{"success":false,"error":"..."}`.
 - **llmGenerate(argsJson)** — args: `{handle,prompt,opts}`. Callback: `{"success":true,"text":"..."}` or `{"success":false,"error":"..."}`.
-- **llmGenerateStream(argsJson, onChunk)** — Stream tokens; call `onChunk('{"content":"token"}')` per token, then `onChunk('{"done":true}')`. Then invoke the callback with `"ok"`.
+- **llmGenerateStream(argsJson, onChunk)** — Stream tokens; call `onChunk('{"content":"token"}')` per token, then `onChunk('{"done":true}')` when complete.
 - **closeLLM(argsJson)** — args: `{handle}`. Callback: `"ok"`.
 
 ### STT
 
 - **createSTT(argsJson)** — args: `{modelPath?, options}`. Callback: `{"success":true,"handle":number}` or error.
 - **sttTranscribe(argsJson)** — args: `{handle,audioData,opts}`. Callback: `{"success":true,"text":"..."}` or error.
-- **sttTranscribeStream(argsJson, onChunk)** — Call `onChunk('{"text":"..."}')` per segment, then `onChunk('{"done":true}')`. Then invoke callback.
+- **sttTranscribeStream(argsJson, onChunk)** — Call `onChunk('{"text":"..."}')` per segment, then `onChunk('{"done":true}')` when complete.
 - **closeSTT(argsJson)** — args: `{handle}`. Callback: `"ok"`.
 
 ### TTS / Embeddings

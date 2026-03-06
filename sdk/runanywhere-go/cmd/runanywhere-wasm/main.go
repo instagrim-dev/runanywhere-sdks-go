@@ -233,8 +233,6 @@ func main() {
 				frame, _ := device.NewLLMStreamFrame(token, isFinal, 0).ToJSONString()
 				onChunk.Invoke(js.ValueOf(frame))
 				if isFinal {
-					doneFrame, _ := device.NewLLMStreamFrame("", true, 0).ToJSONString()
-					onChunk.Invoke(js.ValueOf(doneFrame))
 					return
 				}
 			}

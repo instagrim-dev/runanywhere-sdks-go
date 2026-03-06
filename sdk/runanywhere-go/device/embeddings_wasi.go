@@ -93,14 +93,14 @@ func (e *wasiEmbeddings) EmbedBatch(ctx context.Context, texts []string, opts *E
 		return nil, err
 	}
 	e.mu.Lock()
-	handle := e.handle
-	e.mu.Unlock()
-	if handle == 0 {
+	defer e.mu.Unlock()
+
+	if e.handle == 0 {
 		return nil, ErrNotInitialized
 	}
 
 	req, err := json.Marshal(map[string]interface{}{
-		"handle": handle,
+		"handle": e.handle,
 		"texts":  texts,
 		"opts":   opts,
 	})

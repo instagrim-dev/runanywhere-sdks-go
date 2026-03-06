@@ -494,29 +494,40 @@ func (b *wasmBrowserBackend) checkBridgeVersion() error {
 }
 
 func semverLess(a, b string) bool {
-	parse := func(v string) [3]int {
-		var out [3]int
+	type parsed struct {
+		nums   [3]int
+		preRel bool // true if version has a pre-release suffix (e.g. "-beta1")
+	}
+	parse := func(v string) parsed {
+		var out parsed
 		parts := strings.SplitN(strings.TrimSpace(v), ".", 4)
 		for i := 0; i < len(parts) && i < 3; i++ {
-			part := strings.SplitN(parts[i], "-", 2)[0]
-			n, err := strconv.Atoi(part)
-			if err != nil {
-				// Fail closed: malformed versions are treated as 0.0.0.
-				return [3]int{}
+			split := strings.SplitN(parts[i], "-", 2)
+			if len(split) == 2 {
+				out.preRel = true
 			}
-			out[i] = n
+			n, err := strconv.Atoi(split[0])
+			if err != nil {
+				// Fail closed: malformed versions are treated as 0.0.0-pre.
+				return parsed{preRel: true}
+			}
+			out.nums[i] = n
 		}
 		return out
 	}
 	av := parse(a)
 	bv := parse(b)
 	for i := 0; i < 3; i++ {
-		if av[i] < bv[i] {
+		if av.nums[i] < bv.nums[i] {
 			return true
 		}
-		if av[i] > bv[i] {
+		if av.nums[i] > bv.nums[i] {
 			return false
 		}
+	}
+	// Per semver, pre-release versions have lower precedence than the release.
+	if av.preRel && !bv.preRel {
+		return true
 	}
 	return false
 }

@@ -63,7 +63,23 @@ func go_rac_log(level C.int32_t, category, message *C.char, user_data unsafe.Poi
 	}
 	cat := C.GoString(category)
 	msg := C.GoString(message)
-	LogCore.Debug(msg, map[string]string{"cgo_category": cat})
+	meta := map[string]string{"cgo_category": cat}
+	switch LogLevel(level) {
+	case LogLevelTrace:
+		LogCore.Trace(msg, meta)
+	case LogLevelDebug:
+		LogCore.Debug(msg, meta)
+	case LogLevelInfo:
+		LogCore.Info(msg, meta)
+	case LogLevelWarning:
+		LogCore.Warn(msg, meta)
+	case LogLevelError:
+		LogCore.Error(msg, nil, meta)
+	case LogLevelFault:
+		LogCore.Fault(msg, nil, meta)
+	default:
+		LogCore.Debug(msg, meta)
+	}
 }
 
 //export go_rac_now_ms

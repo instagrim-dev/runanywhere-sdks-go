@@ -175,8 +175,8 @@ func (cb *CircuitBreaker) afterCall(err error) {
 	if err == nil {
 		// Success path.
 		switch cb.state {
-		case CircuitBreakerHalfOpen:
-			// Trial call succeeded → close the breaker.
+		case CircuitBreakerHalfOpen, CircuitBreakerOpen:
+			// Trial call succeeded (or raced with budget exceeded) → close the breaker.
 			cb.state = CircuitBreakerClosed
 			cb.failureCount = 0
 			cb.halfOpenCalls = 0

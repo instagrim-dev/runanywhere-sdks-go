@@ -148,7 +148,7 @@ func (cb *CircuitBreaker) beforeCall() error {
 		// Check if recovery timeout has elapsed → move to HALF_OPEN.
 		if time.Since(cb.lastFailureTime) >= cb.config.RecoveryTimeout {
 			cb.state = CircuitBreakerHalfOpen
-			cb.halfOpenCalls = 0
+			cb.halfOpenCalls = 1 // count this call as the first trial
 			return nil
 		}
 		return ErrCircuitBreakerOpen

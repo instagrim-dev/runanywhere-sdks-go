@@ -47,7 +47,7 @@ func NewSTT(ctx context.Context, modelPath string, opts *STTOptions) (*STT, erro
 	var outHandle C.rac_handle_t
 	res := C.rac_stt_create(cPath, &outHandle)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_stt_create", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_stt_create", int(res)))
 	}
 	incrementHandleCount()
 	return &STT{handle: outHandle}, nil
@@ -80,7 +80,7 @@ func (s *STT) Transcribe(ctx context.Context, audioData []byte, opts *STTOptions
 	var result C.rac_stt_result_t
 	res := C.rac_stt_transcribe(s.handle, unsafe.Pointer(&audioData[0]), C.size_t(len(audioData)), cOpts, &result)
 	if res != C.RAC_SUCCESS {
-		return "", fmt.Errorf("%w", &RACError{Op: "rac_stt_transcribe", Code: int(res)})
+		return "", fmt.Errorf("%w", newCGOError("rac_stt_transcribe", int(res)))
 	}
 	defer C.rac_stt_result_free(&result)
 	if result.text == nil {

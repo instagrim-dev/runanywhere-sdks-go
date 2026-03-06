@@ -156,11 +156,12 @@ fi
 # =============================================================================
 
 STT_DIR="${MODEL_DIR}/ONNX/whisper-tiny-en"
-STT_MARKER="${STT_DIR}/whisper-tiny.en-encoder.onnx"
+STT_MARKER_NEW="${STT_DIR}/tiny.en-encoder.onnx"
+STT_MARKER_LEGACY="${STT_DIR}/whisper-tiny.en-encoder.onnx"
 
 print_step "Whisper Tiny EN..."
 
-if [ -f "${STT_MARKER}" ] && [ "${FORCE_DOWNLOAD}" = false ]; then
+if { [ -f "${STT_MARKER_NEW}" ] || [ -f "${STT_MARKER_LEGACY}" ]; } && [ "${FORCE_DOWNLOAD}" = false ]; then
     print_ok "Whisper Tiny EN already exists, skipping"
 else
     mkdir -p "${STT_DIR}"
@@ -319,8 +320,16 @@ print_size "silero_vad.onnx" "${MODEL_DIR}/ONNX/silero-vad/silero_vad.onnx"
 
 echo ""
 echo "STT (Whisper Tiny EN):"
-print_size "encoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/whisper-tiny.en-encoder.onnx"
-print_size "decoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/whisper-tiny.en-decoder.onnx"
+if [ -f "${MODEL_DIR}/ONNX/whisper-tiny-en/tiny.en-encoder.onnx" ]; then
+    print_size "encoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/tiny.en-encoder.onnx"
+else
+    print_size "encoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/whisper-tiny.en-encoder.onnx"
+fi
+if [ -f "${MODEL_DIR}/ONNX/whisper-tiny-en/tiny.en-decoder.onnx" ]; then
+    print_size "decoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/tiny.en-decoder.onnx"
+else
+    print_size "decoder" "${MODEL_DIR}/ONNX/whisper-tiny-en/whisper-tiny.en-decoder.onnx"
+fi
 
 echo ""
 echo "TTS (Piper Lessac):"

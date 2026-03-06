@@ -36,7 +36,7 @@ func NewEmbeddings(ctx context.Context, modelPath string, opts *EmbedOptions) (*
 	var outHandle C.rac_handle_t
 	res := C.rac_embeddings_create(cPath, &outHandle)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_embeddings_create", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_embeddings_create", int(res)))
 	}
 	// Some backends require initialize with path after create; try it and ignore if unsupported.
 	if C.rac_embeddings_initialize(outHandle, cPath) != C.RAC_SUCCESS {
@@ -64,7 +64,7 @@ func (e *Embeddings) Embed(ctx context.Context, text string, opts *EmbedOptions)
 	var result C.rac_embeddings_result_t
 	res := C.rac_embeddings_embed(e.handle, cText, cOpts, &result)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_embeddings_embed", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_embeddings_embed", int(res)))
 	}
 	defer C.rac_embeddings_result_free(&result)
 	if result.num_embeddings == 0 || result.embeddings == nil {
@@ -111,7 +111,7 @@ func (e *Embeddings) EmbedBatch(ctx context.Context, texts []string, opts *Embed
 	var result C.rac_embeddings_result_t
 	res := C.rac_embeddings_embed_batch(e.handle, &cStrings[0], C.size_t(len(texts)), cOpts, &result)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_embeddings_embed_batch", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_embeddings_embed_batch", int(res)))
 	}
 	defer C.rac_embeddings_result_free(&result)
 	dim := int(result.dimension)

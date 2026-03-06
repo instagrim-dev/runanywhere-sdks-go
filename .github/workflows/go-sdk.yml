@@ -38,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.x'
 
       - name: Build SDK
         working-directory: sdk/runanywhere-go
@@ -68,7 +68,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.x'
 
       - name: Install Task
         run: go install github.com/go-task/task/v3/cmd/task@latest
@@ -78,3 +78,66 @@ jobs:
 
       - name: Build commons and run Go device tests
         run: task device:test-go
+
+  wasm-builds:
+    name: WASM builds (browser + WASI)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+
+      - name: Build WASM (browser)
+        working-directory: sdk/runanywhere-go
+        run: GOOS=js GOARCH=wasm go build -o dist/runanywhere.wasm ./cmd/runanywhere-wasm
+
+      - name: Build WASM device (browser)
+        working-directory: sdk/runanywhere-go
+        run: GOOS=js GOARCH=wasm go build ./device/...
+
+      - name: Vet WASM (browser)
+        working-directory: sdk/runanywhere-go
+        run: GOOS=js GOARCH=wasm go vet ./device/...
+
+      - name: Build WASM (WASI)
+        working-directory: sdk/runanywhere-go
+        run: GOOS=wasip1 GOARCH=wasm go build ./device/...
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runanywhere-wasm-browser
+          path: sdk/runanywhere-go/dist/runanywhere.wasm
+
+      - name: Test WASI host handler
+        working-directory: sdk/runanywhere-go
+        run: go test -v ./cmd/runanywhere-wasi-host/
+
+      - name: Benchmark WASI host handler
+        working-directory: sdk/runanywhere-go
+        run: go test -bench=. -benchmem -benchtime=3s -count=1 ./cmd/runanywhere-wasi-host/ | tee wasi-bench.txt
+
+      - name: Benchmark StreamFrame
+        working-directory: sdk/runanywhere-go
+        run: CGO_ENABLED=0 go test -bench=. -benchmem -benchtime=3s -count=1 ./device/ | tee device-bench.txt
+
+      - name: Run browser WASM benchmarks
+        working-directory: sdk/runanywhere-go
+        run: |
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/
+          node wasm/harness/bench.mjs --iterations 500 | tee browser-bench.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-bench-results
+          path: |
+            sdk/runanywhere-go/wasi-bench.txt
+            sdk/runanywhere-go/device-bench.txt
+            sdk/runanywhere-go/browser-bench.txt

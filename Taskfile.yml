@@ -43,17 +43,17 @@ tasks:
 
   server:smoke-docker:
     desc: "Smoke test server binary inside Docker (for Linux binary from server:build-docker)"
+    deps:
+      - server:build-docker
     dir: "{{.COMMONS_DIR}}"
-    preconditions:
-      - test -x {{.SERVER_BIN}} || (echo "Run task server:build-docker first" && exit 1)
     cmds:
       - docker run --rm -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" -w /src runanywhere-server-builder ./build-server/tools/runanywhere-server --help
 
   server:integration-docker:
     desc: "Integration test in Docker (start server, GET /health). Usage: task server:integration-docker -- /src/path/to/model.gguf"
+    deps:
+      - server:build-docker
     dir: "{{.COMMONS_DIR}}"
-    preconditions:
-      - test -x {{.SERVER_BIN}} || (echo "Run task server:build-docker first" && exit 1)
     cmds:
       - docker run --rm -v "{{.ROOT_DIR}}/{{.COMMONS_DIR}}:/src" -w /src runanywhere-server-builder ./scripts/smoke-test-server.sh {{.CLI_ARGS}}
 
@@ -174,10 +174,11 @@ tasks:
 
   device:tests:
     desc: "Run Go SDK tests with CGO (device package). Requires commons dist; run device:commons-macos first."
+    deps:
+      - device:commons-macos
     dir: "{{.ROOT_DIR}}/sdk/runanywhere-go"
     preconditions:
       - uname -s | grep -q Darwin || (echo "macOS only" && exit 1)
-      - test -d {{.COMMONS_DIR}}/dist/darwin/$(uname -m) || (echo "Run task device:commons-macos first" && exit 1)
     vars:
       ARCH:
         sh: uname -m

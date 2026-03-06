@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build !cgo && !js && !wasip1
 
 package device
 

@@ -62,7 +62,25 @@ echo "Integration: starting server on port $PORT with model $MODEL_PATH"
 "$BIN" --model "$MODEL_PATH" --port "$PORT" --host 127.0.0.1 &
 PID=$!
 cleanup() {
+    if ! kill -0 "$PID" 2>/dev/null; then
+        return
+    fi
+
     kill "$PID" 2>/dev/null || true
+
+    # Avoid indefinite hangs if the server ignores SIGTERM during shutdown.
+    for _ in {1..20}; do
+        if ! kill -0 "$PID" 2>/dev/null; then
+            break
+        fi
+        sleep 0.25
+    done
+
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Server did not exit after SIGTERM; forcing SIGKILL"
+        kill -9 "$PID" 2>/dev/null || true
+    fi
+
     wait "$PID" 2>/dev/null || true
 }
 trap cleanup EXIT

@@ -37,7 +37,7 @@ func NewTTS(ctx context.Context, voicePath string, opts *TTSOptions) (*TTS, erro
 	var outHandle C.rac_handle_t
 	res := C.rac_tts_create(cPath, &outHandle)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_tts_create", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_tts_create", int(res)))
 	}
 	incrementHandleCount()
 	return &TTS{handle: outHandle}, nil
@@ -66,7 +66,7 @@ func (t *TTS) Synthesize(ctx context.Context, text string, opts *TTSOptions) ([]
 	var result C.rac_tts_result_t
 	res := C.rac_tts_synthesize(t.handle, cText, cOpts, &result)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_tts_synthesize", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_tts_synthesize", int(res)))
 	}
 	defer C.rac_tts_result_free(&result)
 	if result.audio_data == nil || result.audio_size == 0 {

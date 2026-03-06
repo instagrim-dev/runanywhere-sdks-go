@@ -40,10 +40,9 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
-	"unsafe"
 	"time"
+	"unsafe"
 
 	"runtime/cgo"
 )
@@ -64,7 +63,23 @@ func go_rac_log(level C.int32_t, category, message *C.char, user_data unsafe.Poi
 	}
 	cat := C.GoString(category)
 	msg := C.GoString(message)
-	log.Printf("[%s] %s", cat, msg)
+	meta := map[string]string{"cgo_category": cat}
+	switch LogLevel(level) {
+	case LogLevelTrace:
+		LogCore.Trace(msg, meta)
+	case LogLevelDebug:
+		LogCore.Debug(msg, meta)
+	case LogLevelInfo:
+		LogCore.Info(msg, meta)
+	case LogLevelWarning:
+		LogCore.Warn(msg, meta)
+	case LogLevelError:
+		LogCore.Error(msg, nil, meta)
+	case LogLevelFault:
+		LogCore.Fault(msg, nil, meta)
+	default:
+		LogCore.Debug(msg, meta)
+	}
 }
 
 //export go_rac_now_ms
@@ -146,7 +161,7 @@ func InitWithConfig(ctx context.Context, cfg *Config) error {
 	if res != C.RAC_SUCCESS {
 		state.handle.Delete()
 		C.free(unsafe.Pointer(state.logTag))
-		return fmt.Errorf("%w", &RACError{Op: "rac_init", Code: int(res)})
+		return fmt.Errorf("%w", newCGOError("rac_init", int(res)))
 	}
 	initStateVal = state
 	initialized = true
@@ -157,7 +172,7 @@ func InitWithConfig(ctx context.Context, cfg *Config) error {
 		initStateVal.handle.Delete()
 		C.free(unsafe.Pointer(initStateVal.logTag))
 		initStateVal = nil
-		return fmt.Errorf("%w", &RACError{Op: "rac_backend_llamacpp_register", Code: int(res)})
+		return fmt.Errorf("%w", newCGOError("rac_backend_llamacpp_register", int(res)))
 	}
 	if cfg != nil && cfg.RegisterONNX {
 		res = C.rac_backend_onnx_register()
@@ -167,9 +182,10 @@ func InitWithConfig(ctx context.Context, cfg *Config) error {
 			initStateVal.handle.Delete()
 			C.free(unsafe.Pointer(initStateVal.logTag))
 			initStateVal = nil
-			return fmt.Errorf("%w", &RACError{Op: "rac_backend_onnx_register", Code: int(res)})
+			return fmt.Errorf("%w", newCGOError("rac_backend_onnx_register", int(res)))
 		}
 	}
+	Publish(NewLifecycleEvent("initialized"))
 	return nil
 }
 
@@ -189,5 +205,6 @@ func Shutdown() error {
 		initStateVal = nil
 	}
 	initialized = false
+	Publish(NewLifecycleEvent("shutdown"))
 	return nil
 }

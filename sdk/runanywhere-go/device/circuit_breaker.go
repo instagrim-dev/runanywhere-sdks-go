@@ -156,8 +156,9 @@ func (cb *CircuitBreaker) beforeCall() error {
 	case CircuitBreakerHalfOpen:
 		if cb.halfOpenCalls >= cb.config.HalfOpenMaxCalls {
 			// Exceeded trial budget → trip back to OPEN.
+			// Do not update lastFailureTime: no actual call failed, so the
+			// recovery timer should not be reset unnecessarily.
 			cb.state = CircuitBreakerOpen
-			cb.lastFailureTime = time.Now()
 			return ErrCircuitBreakerOpen
 		}
 		cb.halfOpenCalls++

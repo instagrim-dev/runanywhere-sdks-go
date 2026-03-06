@@ -395,7 +395,7 @@ sdk/runanywhere-go/examples/embeddings/embeddings
 sdk/runanywhere-go/examples/device-chat/device-chat
 
 # Go SDK - test binaries and WASM build outputs
-*.test
+sdk/runanywhere-go/**/*.test
 sdk/runanywhere-go/runanywhere-wasm
 sdk/runanywhere-go/dist/
 

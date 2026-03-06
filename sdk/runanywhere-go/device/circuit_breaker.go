@@ -90,6 +90,7 @@ type CircuitBreaker struct {
 	failureCount    int
 	halfOpenCalls   int
 	lastFailureTime time.Time
+	openedAt        time.Time // when the breaker last entered OPEN; used for recovery timeout
 }
 
 // NewCircuitBreaker creates a circuit breaker with the given config (defaults applied).
@@ -133,6 +134,7 @@ func (cb *CircuitBreaker) Reset() {
 	cb.failureCount = 0
 	cb.halfOpenCalls = 0
 	cb.lastFailureTime = time.Time{}
+	cb.openedAt = time.Time{}
 }
 
 // beforeCall checks the state machine and decides whether to allow the call.
@@ -146,7 +148,7 @@ func (cb *CircuitBreaker) beforeCall() error {
 
 	case CircuitBreakerOpen:
 		// Check if recovery timeout has elapsed → move to HALF_OPEN.
-		if time.Since(cb.lastFailureTime) >= cb.config.RecoveryTimeout {
+		if time.Since(cb.openedAt) >= cb.config.RecoveryTimeout {
 			cb.state = CircuitBreakerHalfOpen
 			cb.halfOpenCalls = 1 // count this call as the first trial
 			return nil
@@ -156,9 +158,9 @@ func (cb *CircuitBreaker) beforeCall() error {
 	case CircuitBreakerHalfOpen:
 		if cb.halfOpenCalls >= cb.config.HalfOpenMaxCalls {
 			// Exceeded trial budget → trip back to OPEN.
-			// Do not update lastFailureTime: no actual call failed, so the
-			// recovery timer should not be reset unnecessarily.
+			// Reset openedAt so recovery timeout restarts, preventing rapid cycling.
 			cb.state = CircuitBreakerOpen
+			cb.openedAt = time.Now()
 			return ErrCircuitBreakerOpen
 		}
 		cb.halfOpenCalls++
@@ -196,10 +198,12 @@ func (cb *CircuitBreaker) afterCall(err error) {
 	case CircuitBreakerClosed:
 		if cb.failureCount >= cb.config.FailureThreshold {
 			cb.state = CircuitBreakerOpen
+			cb.openedAt = cb.lastFailureTime
 		}
 	case CircuitBreakerHalfOpen:
 		// Any failure in half-open trips back to open.
 		cb.state = CircuitBreakerOpen
+		cb.openedAt = cb.lastFailureTime
 	}
 }
 

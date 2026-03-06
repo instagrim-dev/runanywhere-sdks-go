@@ -1,5 +1,7 @@
 package device
 
+import "time"
+
 // Config holds options for device initialization. Pass to InitWithConfig.
 // Zero value registers only the LlamaCPP backend (LLM). Set RegisterONNX
 // to true to also register the ONNX backend (STT/TTS/Embeddings).
@@ -17,6 +19,10 @@ type Config struct {
 	// so with nil config only LlamaCPP is registered; pass a config with RegisterONNX: true
 	// to enable STT/TTS when librac_backend_onnx is linked.
 	RegisterONNX bool
+
+	// BridgeTimeout is the maximum time to wait for a synchronous WASM bridge call.
+	// Zero means the default (30s). Only used by the browser WASM backend.
+	BridgeTimeout time.Duration
 }
 
 // LLMOptions holds options for LLM generation (Generate and GenerateStream).
@@ -26,6 +32,11 @@ type LLMOptions struct {
 	TopP          float32
 	SystemPrompt  string
 	StopSequences []string
+
+	// ModelSource optionally provides model data from a custom source (e.g. RemoteModel, Base64Model).
+	// When set, NewLLM may use it instead of or in addition to modelPath. Backend-specific;
+	// WASM bridge may accept URL or base64 via modelPath; native may resolve to a temp path.
+	ModelSource ModelSource
 }
 
 // STTOptions holds options for speech-to-text. Zero value uses backend defaults.

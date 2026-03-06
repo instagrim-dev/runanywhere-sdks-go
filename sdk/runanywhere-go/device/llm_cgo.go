@@ -49,7 +49,7 @@ func NewLLM(ctx context.Context, modelPath string, opts *LLMOptions) (*LLM, erro
 	var outHandle C.rac_handle_t
 	res := C.rac_llm_llamacpp_create(cPath, config, &outHandle)
 	if res != C.RAC_SUCCESS {
-		return nil, fmt.Errorf("%w", &RACError{Op: "rac_llm_llamacpp_create", Code: int(res)})
+		return nil, fmt.Errorf("%w", newCGOError("rac_llm_llamacpp_create", int(res)))
 	}
 	incrementHandleCount()
 	return &LLM{handle: outHandle}, nil
@@ -91,7 +91,7 @@ func (l *LLM) Generate(ctx context.Context, prompt string, opts *LLMOptions) (st
 	var result C.rac_llm_result_t
 	res := C.rac_llm_llamacpp_generate(l.handle, cPrompt, cOpts, &result)
 	if res != C.RAC_SUCCESS {
-		return "", fmt.Errorf("%w", &RACError{Op: "rac_llm_llamacpp_generate", Code: int(res)})
+		return "", fmt.Errorf("%w", newCGOError("rac_llm_llamacpp_generate", int(res)))
 	}
 	defer C.rac_llm_result_free(&result)
 	if result.text == nil {
